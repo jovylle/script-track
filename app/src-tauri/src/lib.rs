@@ -142,7 +142,7 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
         .file_stem()  // Gets filename without extension
         .and_then(|name| name.to_str())
         .unwrap_or("output");
-    let temp_output = format!("{}.json", filename);
+    let temp_output = format!("../../temp_uploads/{}.json", filename);
     
     println!("Looking for JSON file: {}", temp_output);
     
@@ -155,7 +155,7 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
         .arg("--output_format")
         .arg("json")
         .arg("--output_dir")
-        .arg(".")
+        .arg("../../temp_uploads")
         .arg("--word_timestamps")
         .arg("True")
         .output();
@@ -175,29 +175,69 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
                         
                         if let Some(segments_array) = whisper_result["segments"].as_array() {
                             for segment in segments_array {
-                                if let (Some(start), Some(end), Some(text)) = (
-                                    segment["start"].as_f64(),
-                                    segment["end"].as_f64(),
-                                    segment["text"].as_str()
-                                ) {
-                                    segments.push(TranscriptSegment {
-                                        id,
-                                        start,
-                                        end,
-                                        text: text.trim().to_string(),
-                                        keep: true,
-                                    });
-                                    id += 1;
+                                // Check if segment has words array for word-level timestamps
+                                if let Some(words_array) = segment["words"].as_array() {
+                                    println!("Found {} words in segment", words_array.len());
+                                    let mut word_group = Vec::new();
+                                    let mut group_start = 0.0;
+                                    
+                                    for (i, word) in words_array.iter().enumerate() {
+                                        if let (Some(word_start), Some(word_end), Some(word_text)) = (
+                                            word["start"].as_f64(),
+                                            word["end"].as_f64(),
+                                            word["word"].as_str()
+                                        ) {
+                                            if word_group.is_empty() {
+                                                group_start = word_start;
+                                            }
+                                            
+                                            word_group.push(word_text.trim());
+                                            
+                                            // Group every 2-3 words or at end of words array
+                                            if word_group.len() >= 2 || i == words_array.len() - 1 {
+                                                segments.push(TranscriptSegment {
+                                                    id,
+                                                    start: group_start,
+                                                    end: word_end,
+                                                    text: word_group.join(" "),
+                                                    keep: true,
+                                                });
+                                                id += 1;
+                                                word_group.clear();
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // Fallback: if no words array, use the segment as is
+                                    if let (Some(start), Some(end), Some(text)) = (
+                                        segment["start"].as_f64(),
+                                        segment["end"].as_f64(),
+                                        segment["text"].as_str()
+                                    ) {
+                                        segments.push(TranscriptSegment {
+                                            id,
+                                            start,
+                                            end,
+                                            text: text.trim().to_string(),
+                                            keep: true,
+                                        });
+                                        id += 1;
+                                    }
                                 }
                             }
                         }
                         
                         let duration = whisper_result["duration"].as_f64().unwrap_or(0.0);
                         
-                        // Clean up temporary file
+                        // Clean up temporary file (keeping it causes rebuild loops)
                         let _ = std::fs::remove_file(&temp_output);
                         
-                        println!("Successfully parsed {} segments from Whisper", segments.len());
+                        println!("Successfully parsed {} word-level segments from Whisper", segments.len());
+                        println!("JSON file location: {}", temp_output);
+                        println!("First few segments:");
+                        for (i, segment) in segments.iter().take(3).enumerate() {
+                            println!("  Segment {}: '{}' ({:.1}s-{:.1}s)", i+1, segment.text, segment.start, segment.end);
+                        }
                         return Ok(TranscriptionResult {
                             segments,
                             duration,
@@ -273,6 +313,7 @@ async fn export_video(
     
     // For blob URLs, we can't use FFmpeg directly
     if input_path.starts_with("blob:") {
+        println!("❌ Cannot export blob URLs directly: {}", input_path);
         return Err("Cannot export blob URLs directly. Please save the file first.".to_string());
     }
 
@@ -320,14 +361,21 @@ async fn export_video(
     
     match output {
         Ok(result) => {
+            println!("FFmpeg command completed with status: {}", result.status);
             if result.status.success() {
+                println!("✅ Video exported successfully to {}", output_path);
                 Ok(format!("Video exported successfully to {}", output_path))
             } else {
-                let error_msg = String::from_utf8_lossy(&result.stderr);
-                Err(format!("FFmpeg error: {}", error_msg))
+                let stdout_msg = String::from_utf8_lossy(&result.stdout);
+                let stderr_msg = String::from_utf8_lossy(&result.stderr);
+                println!("❌ FFmpeg failed!");
+                println!("STDOUT: {}", stdout_msg);
+                println!("STDERR: {}", stderr_msg);
+                Err(format!("FFmpeg error: {}", stderr_msg))
             }
         }
         Err(e) => {
+            println!("❌ Failed to run FFmpeg: {}", e);
             Err(format!("Failed to run FFmpeg: {}", e))
         }
     }

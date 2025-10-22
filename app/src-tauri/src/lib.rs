@@ -178,32 +178,24 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
                                 // Check if segment has words array for word-level timestamps
                                 if let Some(words_array) = segment["words"].as_array() {
                                     println!("Found {} words in segment", words_array.len());
-                                    let mut word_group = Vec::new();
-                                    let mut group_start = 0.0;
                                     
-                                    for (i, word) in words_array.iter().enumerate() {
+                                    // Create individual word segments to detect pauses between words
+                                    for word in words_array.iter() {
                                         if let (Some(word_start), Some(word_end), Some(word_text)) = (
                                             word["start"].as_f64(),
                                             word["end"].as_f64(),
                                             word["word"].as_str()
                                         ) {
-                                            if word_group.is_empty() {
-                                                group_start = word_start;
-                                            }
-                                            
-                                            word_group.push(word_text.trim());
-                                            
-                                            // Group every 2-3 words or at end of words array
-                                            if word_group.len() >= 2 || i == words_array.len() - 1 {
+                                            let clean_text = word_text.trim();
+                                            if !clean_text.is_empty() {
                                                 segments.push(TranscriptSegment {
                                                     id,
-                                                    start: group_start,
+                                                    start: word_start,
                                                     end: word_end,
-                                                    text: word_group.join(" "),
+                                                    text: clean_text.to_string(),
                                                     keep: true,
                                                 });
                                                 id += 1;
-                                                word_group.clear();
                                             }
                                         }
                                     }

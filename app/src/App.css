@@ -1,0 +1,458 @@
+/* Reset and base styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Roboto', sans-serif;
+  background: #0a0a0a;
+  color: #ffffff;
+  overflow: hidden;
+}
+
+.app {
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Header */
+.app-header {
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+  padding: 1rem 2rem;
+  text-align: center;
+}
+
+.app-header h1 {
+  font-size: 1.5rem;
+  font-weight: 600;
+  margin-bottom: 0.25rem;
+}
+
+.app-header p {
+  color: #888;
+  font-size: 0.9rem;
+}
+
+.keyboard-shortcuts {
+  margin-top: 1rem;
+  font-size: 0.8rem;
+  color: #777;
+  background: rgba(97, 218, 251, 0.1);
+  padding: 0.5rem 1rem;
+  border-radius: 6px;
+  border: 1px solid rgba(97, 218, 251, 0.2);
+}
+
+/* Main content */
+.app-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Import section */
+.import-section {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+  transition: all 0.3s ease;
+}
+
+.import-section.drag-over {
+  background-color: rgba(97, 218, 251, 0.1);
+  border: 2px dashed #61dafb;
+  border-radius: 12px;
+}
+
+.import-card {
+  background: #1a1a1a;
+  border: 2px dashed #444;
+  border-radius: 12px;
+  padding: 3rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  max-width: 400px;
+  width: 100%;
+}
+
+.import-card:hover {
+  border-color: #646cff;
+  background: #1e1e1e;
+}
+
+.import-card svg {
+  color: #646cff;
+  margin-bottom: 1rem;
+}
+
+.import-card h2 {
+  font-size: 1.25rem;
+  margin-bottom: 0.5rem;
+}
+
+.import-card p {
+  color: #888;
+  margin-bottom: 0.5rem;
+}
+
+.supported-formats {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+/* Workspace */
+.workspace {
+  flex: 1;
+  display: flex;
+  height: 100%;
+}
+
+/* Video panel */
+.video-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #111;
+  border-right: 1px solid #333;
+}
+
+.video-container {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 2rem;
+}
+
+.video-player {
+  width: 100%;
+  max-width: 500px;
+  height: auto;
+  border-radius: 8px;
+  background: #000;
+}
+
+.video-placeholder {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 3rem;
+  text-align: center;
+  width: 100%;
+  max-width: 500px;
+}
+
+.video-placeholder svg {
+  color: #646cff;
+  margin-bottom: 1rem;
+}
+
+.video-placeholder p {
+  color: #888;
+  margin-bottom: 0.5rem;
+}
+
+.video-controls {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem 2rem;
+  background: #1a1a1a;
+  border-top: 1px solid #333;
+}
+
+.control-btn {
+  background: #646cff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem;
+  color: white;
+  cursor: pointer;
+  transition: background 0.2s ease;
+}
+
+.control-btn:hover {
+  background: #5a5fcf;
+}
+
+.time-display {
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 0.9rem;
+  color: #888;
+}
+
+/* Transcript panel */
+.transcript-panel {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  background: #111;
+  min-width: 400px;
+}
+
+.transcript-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 1rem 1.5rem;
+  background: #1a1a1a;
+  border-bottom: 1px solid #333;
+}
+
+.transcript-header h3 {
+  font-size: 1.1rem;
+  font-weight: 600;
+}
+
+.transcribe-btn, .export-btn {
+  background: #646cff;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  color: white;
+  font-size: 0.9rem;
+  cursor: pointer;
+  transition: background 0.2s ease;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.transcribe-btn:hover, .export-btn:hover {
+  background: #5a5fcf;
+}
+
+.transcribe-btn:disabled {
+  background: #444;
+  cursor: not-allowed;
+}
+
+.transcript-content {
+  flex: 1;
+  overflow-y: auto;
+  padding: 1rem;
+}
+
+/* Transcribing state */
+.transcribing {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #888;
+}
+
+.spinner {
+  width: 32px;
+  height: 32px;
+  border: 3px solid #333;
+  border-top: 3px solid #646cff;
+  border-radius: 50%;
+  animation: spin 1s linear infinite;
+  margin-bottom: 1rem;
+}
+
+@keyframes spin {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+
+/* Progress bars */
+.progress-bar {
+  width: 100%;
+  height: 8px;
+  background-color: #333;
+  border-radius: 4px;
+  overflow: hidden;
+  margin: 1rem 0;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #61dafb, #4fa3d1);
+  border-radius: 4px;
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  text-align: center;
+  font-size: 0.9rem;
+  color: #aaa;
+  margin: 0.5rem 0;
+}
+
+.export-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.export-progress {
+  margin-top: 0.5rem;
+}
+
+/* Transcript segments */
+.transcript-segments {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.transcript-segment {
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 8px;
+  padding: 1rem;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.transcript-segment:hover {
+  background: #1e1e1e;
+  border-color: #444;
+}
+
+.transcript-segment.removed {
+  opacity: 0.5;
+  background: #2a1a1a;
+  border-color: #663333;
+}
+
+.segment-time {
+  font-family: 'Monaco', 'Menlo', monospace;
+  font-size: 0.8rem;
+  color: #646cff;
+  min-width: 60px;
+  flex-shrink: 0;
+}
+
+.segment-text {
+  flex: 1;
+  line-height: 1.4;
+}
+
+.segment-text-content {
+  cursor: pointer;
+  transition: color 0.2s ease;
+}
+
+.segment-text-content:hover {
+  color: #61dafb;
+}
+
+.edit-mode {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.edit-input {
+  background: #333;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 0.5rem;
+  color: #f0f0f0;
+  font-size: 0.9rem;
+  width: 100%;
+}
+
+.edit-input:focus {
+  outline: none;
+  border-color: #61dafb;
+}
+
+.edit-buttons {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.save-btn, .cancel-btn {
+  background: none;
+  border: 1px solid #555;
+  border-radius: 4px;
+  padding: 0.25rem 0.5rem;
+  color: #f0f0f0;
+  cursor: pointer;
+  font-size: 0.8rem;
+  transition: all 0.2s ease;
+}
+
+.save-btn {
+  border-color: #4CAF50;
+  color: #4CAF50;
+}
+
+.save-btn:hover {
+  background: #4CAF50;
+  color: #1a1a1a;
+}
+
+.cancel-btn {
+  border-color: #f44336;
+  color: #f44336;
+}
+
+.cancel-btn:hover {
+  background: #f44336;
+  color: #1a1a1a;
+}
+
+.segment-toggle {
+  background: none;
+  border: none;
+  color: #888;
+  cursor: pointer;
+  padding: 0.25rem;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+  flex-shrink: 0;
+}
+
+.segment-toggle:hover {
+  background: #333;
+  color: #fff;
+}
+
+.transcript-segment.removed .segment-toggle {
+  color: #ff6b6b;
+}
+
+/* No transcript state */
+.no-transcript {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  height: 200px;
+  color: #888;
+  text-align: center;
+}
+
+/* Scrollbar styling */
+.transcript-content::-webkit-scrollbar {
+  width: 8px;
+}
+
+.transcript-content::-webkit-scrollbar-track {
+  background: #1a1a1a;
+}
+
+.transcript-content::-webkit-scrollbar-thumb {
+  background: #444;
+  border-radius: 4px;
+}
+
+.transcript-content::-webkit-scrollbar-thumb:hover {
+  background: #555;
+}

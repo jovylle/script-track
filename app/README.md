@@ -1,17 +1,7 @@
-# App Layer
+# Tauri + React + Typescript
 
-This directory contains the Tauri + React UI components for script-track.
+This template should help get you started developing with Tauri, React and Typescript in Vite.
 
-## Structure
+## Recommended IDE Setup
 
-- `src/` - React components and UI logic
-- `public/` - Static assets
-- `tauri.conf.json` - Tauri configuration
-
-## Getting Started
-
-```bash
-cd app
-npm install
-npm run dev
-```
+- [VS Code](https://code.visualstudio.com/) + [Tauri](https://marketplace.visualstudio.com/items?itemName=tauri-apps.tauri-vscode) + [rust-analyzer](https://marketplace.visualstudio.com/items?itemName=rust-lang.rust-analyzer)

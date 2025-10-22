@@ -1,0 +1,24 @@
+{
+  "name": "@script-track/core",
+  "version": "1.0.0",
+  "description": "FFmpeg integration and video processing logic for script-track",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ffmpeg",
+    "video-processing",
+    "video-editing"
+  ],
+  "author": "script-track contributors",
+  "license": "MIT",
+  "dependencies": {
+    "fluent-ffmpeg": "^2.1.2"
+  },
+  "devDependencies": {
+    "@types/fluent-ffmpeg": "^2.1.24"
+  }
+}
+

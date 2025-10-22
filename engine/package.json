@@ -1,0 +1,26 @@
+{
+  "name": "@script-track/engine",
+  "version": "1.0.0",
+  "description": "Whisper/WhisperX integration for speech recognition in script-track",
+  "main": "index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "whisper",
+    "transcription",
+    "speech-recognition",
+    "ai"
+  ],
+  "author": "script-track contributors",
+  "license": "MIT",
+  "dependencies": {
+    "openai-whisper": "^1.0.0",
+    "whisper-node": "^0.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.0.0"
+  }
+}
+

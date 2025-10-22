@@ -54,6 +54,10 @@ models/
 temp/
 *.tmp
 
+# Temporary uploads (user files)
+temp_uploads/
+**/temp_uploads/
+
 # Logs
 logs/
 *.log

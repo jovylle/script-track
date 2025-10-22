@@ -430,6 +430,8 @@ function App() {
     // Sort segments by start time
     const sortedSegments = [...speechSegments].sort((a, b) => a.start - b.start);
     
+    console.log(`📊 Analyzing ${sortedSegments.length} individual word segments for gaps...`);
+    
     for (let i = 0; i < sortedSegments.length - 1; i++) {
       const current = sortedSegments[i];
       const next = sortedSegments[i + 1];

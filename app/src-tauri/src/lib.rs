@@ -454,24 +454,31 @@ async fn detect_audio_silence(
         
         // Analyze this chunk
         let chunk_output = Command::new("ffmpeg")
+            .arg("-i")
+            .arg(&file_path)
             .arg("-ss")
             .arg(&format!("{:.1}", start_time))
             .arg("-t")
             .arg(&format!("{:.1}", chunk_size))
-            .arg("-i")
-            .arg(&file_path)
             .arg("-af")
             .arg("volumedetect")
             .arg("-f")
             .arg("null")
             .arg("-")
             .arg("-v")
-            .arg("quiet")
+            .arg("info")
             .output();
         
         match chunk_output {
             Ok(result) => {
                 let stderr = String::from_utf8_lossy(&result.stderr);
+                let stdout = String::from_utf8_lossy(&result.stdout);
+                
+                // Debug: show what FFmpeg is actually returning
+                if chunk_start < 3 {
+                    println!("  🔍 FFmpeg stdout: {}", stdout.chars().take(200).collect::<String>());
+                    println!("  🔍 FFmpeg stderr: {}", stderr.chars().take(200).collect::<String>());
+                }
                 
                 // Parse volume from volumedetect output
                 if let Some(volume) = parse_volume_from_output(&stderr) {
@@ -492,7 +499,7 @@ async fn detect_audio_silence(
                     // Log when we can't parse volume
                     if chunk_start % 50 == 0 {
                         println!("  ❌ {:.1}s: Could not parse volume from FFmpeg output", start_time);
-                        println!("     FFmpeg output: {}", stderr.chars().take(100).collect::<String>());
+                        println!("     FFmpeg stderr: {}", stderr.chars().take(100).collect::<String>());
                     }
                 }
             }

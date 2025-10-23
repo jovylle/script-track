@@ -1011,7 +1011,7 @@ function App() {
                           
                           <div className="audio-settings">
                             <div className="settings-row">
-                              <label className="setting-item">
+                              <label className="setting-item" title="Noise level to detect as silent - lower values detect quieter sounds">
                                 Noise Level: 
                                 <div className="setting-description">
                                   {noiseThreshold <= -50 && "Very Sensitive"}
@@ -1033,11 +1033,12 @@ function App() {
                                     });
                                     setNoiseThreshold(newThreshold);
                                   }}
+                                  title="Noise level to detect as silent - lower values detect quieter sounds"
                                 />
                                 <span>{noiseThreshold}dB</span>
                               </label>
                               
-                              <label className="setting-item">
+                              <label className="setting-item" title="Minimum duration for silence to be detected - shorter pauses will be ignored">
                                 Min Duration: 
                                 <input
                                   type="range" 
@@ -1053,6 +1054,7 @@ function App() {
                                     });
                                     setMinSilenceDuration(newDuration);
                                   }}
+                                  title="Minimum duration for silence to be detected - shorter pauses will be ignored"
                                 />
                                 <span>{minSilenceDuration}s</span>
                               </label>

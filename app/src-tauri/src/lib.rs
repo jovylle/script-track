@@ -538,7 +538,7 @@ fn group_quiet_samples(samples: Vec<(f64, f64)>, min_duration: f64) -> Vec<Silen
     let mut current_end = samples[0].0 + 0.1; // Each sample is 0.1s
     let mut current_samples = 1;
     
-    for (time, volume) in samples.iter().skip(1) {
+    for (time, _volume) in samples.iter().skip(1) {
         // If this sample is within 0.2s of the current region, extend it
         if *time <= current_end + 0.2 {
             current_end = *time + 0.1;
@@ -677,7 +677,7 @@ async fn open_file_location(file_path: String) -> Result<(), String> {
     let parent_dir = path.parent()
         .ok_or_else(|| "Could not get parent directory".to_string())?;
     
-    let parent_dir_str = parent_dir.to_string_lossy().to_string();
+    let _parent_dir_str = parent_dir.to_string_lossy().to_string();
     
     // Open the directory in the system file manager
     #[cfg(target_os = "macos")]
@@ -724,6 +724,8 @@ async fn open_file_location(file_path: String) -> Result<(), String> {
 
 #[tauri::command]
 async fn analyze_audio_for_presets(file_path: String) -> Result<AudioPresetAnalysis, String> {
+    use std::process::Command;
+    
     println!("📊 Analyzing audio for preset suggestions...");
     
     // For blob URLs, we can't use external tools directly

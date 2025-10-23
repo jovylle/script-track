@@ -771,6 +771,65 @@ body {
   transform: translateY(-1px);
 }
 
+/* Preset buttons for silence detection */
+.preset-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+  padding: 1rem;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 8px;
+  border: 1px solid rgba(97, 218, 251, 0.2);
+}
+
+.preset-btn {
+  flex: 1;
+  padding: 0.5rem 1rem;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #333;
+  color: #f0f0f0;
+  font-size: 0.85rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.preset-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.preset-btn.aggressive {
+  border-color: #ff6b6b;
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.preset-btn.aggressive:hover {
+  background: rgba(255, 107, 107, 0.2);
+  border-color: #ff6b6b;
+}
+
+.preset-btn.balanced {
+  border-color: #61dafb;
+  background: rgba(97, 218, 251, 0.1);
+}
+
+.preset-btn.balanced:hover {
+  background: rgba(97, 218, 251, 0.2);
+  border-color: #61dafb;
+}
+
+.preset-btn.conservative {
+  border-color: #4CAF50;
+  background: rgba(76, 175, 80, 0.1);
+}
+
+.preset-btn.conservative:hover {
+  background: rgba(76, 175, 80, 0.2);
+  border-color: #4CAF50;
+}
+
 /* Loading overlay */
 .loading-overlay {
   position: fixed;

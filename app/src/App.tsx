@@ -49,7 +49,7 @@ function App() {
   const [editText, setEditText] = useState('');
   // Removed silenceThreshold - no longer using gap-based detection
   const [showSilenceSettings, setShowSilenceSettings] = useState(false);
-  const [noiseThreshold, setNoiseThreshold] = useState(-30.0);
+  const [noiseThreshold, setNoiseThreshold] = useState(-40.0); // More sensitive default
   const [minSilenceDuration, setMinSilenceDuration] = useState(0.5);
   const [audioBoost, setAudioBoost] = useState(1.0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
@@ -662,26 +662,16 @@ function App() {
       const speechSegments = transcript.filter(s => !s.isSilence);
       await logToTerminal(`📋 SPEECH SEGMENTS: ${speechSegments.length}`);
       
-      // Convert silence regions to transcript segments
-      // Default to keep: true (included), users can exclude them manually
-      const silentSegments: TranscriptSegment[] = silenceRegions.map((region, index) => ({
-        id: `silence-${index}-${Date.now()}`,
-        start: region.start,
-        end: region.end,
-        text: `[Silence: ${region.duration.toFixed(1)}s]`,
-        keep: true,
-        isSilence: true
-      }));
-      
-      for (const seg of silentSegments) {
-        await logToTerminal(`  🔇 Silence: ${seg.start.toFixed(2)}s - ${seg.end.toFixed(2)}s (${(seg.end - seg.start).toFixed(2)}s)`);
+      // Log detected silence regions
+      for (const region of silenceRegions) {
+        await logToTerminal(`  🔇 Silence: ${region.start.toFixed(2)}s - ${region.end.toFixed(2)}s (${region.duration.toFixed(2)}s)`);
       }
       
-      // Combine speech and silence segments
-      const allSegments = [...speechSegments, ...silentSegments];
+      // Use smart splitting algorithm to avoid overlaps
+      const { splitSegmentsAtSilence } = await import('./utils/transcriptUtils');
+      const allSegments = splitSegmentsAtSilence(speechSegments, silenceRegions);
       
-      // Sort by start time
-      allSegments.sort((a, b) => a.start - b.start);
+      await logToTerminal(`📊 SPLITTING RESULTS: ${speechSegments.length} speech → ${allSegments.length} total segments`);
       
       // Save to history and update transcript
       saveToHistory(transcript);
@@ -1008,10 +998,16 @@ function App() {
                           <div className="audio-settings">
                             <label>
                               Noise Level: 
-                              <div className="setting-description">Audio below this level will be marked as silence</div>
+                              <div className="setting-description">
+                                Audio below this level will be marked as silence
+                                {noiseThreshold <= -50 && " (Very Sensitive - catches quiet moments)"}
+                                {noiseThreshold > -50 && noiseThreshold <= -40 && " (Balanced - recommended)"}
+                                {noiseThreshold > -40 && noiseThreshold <= -30 && " (Conservative - only true silence)"}
+                                {noiseThreshold > -30 && " (Very Conservative - only complete silence)"}
+                              </div>
                               <input
                                 type="range" 
-                                min="-50" 
+                                min="-60" 
                                 max="-10" 
                                 step="5"
                                 value={noiseThreshold}
@@ -1046,6 +1042,43 @@ function App() {
                               />
                               <span>{minSilenceDuration}s</span>
                             </label>
+                          </div>
+                          
+                          {/* Preset buttons for quick configuration */}
+                          <div className="preset-buttons">
+                            <button 
+                              className="preset-btn aggressive"
+                              onClick={() => {
+                                setNoiseThreshold(-50);
+                                setMinSilenceDuration(0.3);
+                                console.log('🎯 PRESET: Aggressive - removes all pauses');
+                              }}
+                              title="Removes all pauses and quiet moments"
+                            >
+                              Aggressive
+                            </button>
+                            <button 
+                              className="preset-btn balanced"
+                              onClick={() => {
+                                setNoiseThreshold(-40);
+                                setMinSilenceDuration(0.5);
+                                console.log('🎯 PRESET: Balanced - removes long pauses');
+                              }}
+                              title="Removes long pauses (recommended)"
+                            >
+                              Balanced
+                            </button>
+                            <button 
+                              className="preset-btn conservative"
+                              onClick={() => {
+                                setNoiseThreshold(-30);
+                                setMinSilenceDuration(1.0);
+                                console.log('🎯 PRESET: Conservative - only true silence');
+                              }}
+                              title="Only removes complete silence"
+                            >
+                              Conservative
+                            </button>
                           </div>
                           
                           <button 

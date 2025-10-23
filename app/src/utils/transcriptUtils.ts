@@ -1,10 +1,95 @@
-import type { TranscriptSegment } from '../types';
+import type { TranscriptSegment, SilenceRegion } from '../types';
+
+/**
+ * Splits word segments at silence boundaries to avoid overlaps
+ * @param wordSegments - Original word segments from Whisper
+ * @param silenceRegions - Detected silence regions from FFmpeg
+ * @returns Non-overlapping segments (words + silence)
+ */
+export function splitSegmentsAtSilence(
+  wordSegments: TranscriptSegment[],
+  silenceRegions: SilenceRegion[]
+): TranscriptSegment[] {
+  const result: TranscriptSegment[] = [];
+  
+  for (const word of wordSegments) {
+    let remainingSegments = [word];
+    
+    // For each silence region, split any overlapping segments
+    for (const silence of silenceRegions) {
+      const newSegments: TranscriptSegment[] = [];
+      
+      for (const seg of remainingSegments) {
+        const splits = splitSegmentBySilence(seg, silence);
+        newSegments.push(...splits);
+      }
+      
+      remainingSegments = newSegments;
+    }
+    
+    result.push(...remainingSegments);
+  }
+  
+  // Add silence segments
+  const silenceSegments = silenceRegions.map((region, i) => ({
+    id: `silence-${i}-${Date.now()}`,
+    start: region.start,
+    end: region.end,
+    text: `[Silence: ${region.duration.toFixed(1)}s]`,
+    keep: true,
+    isSilence: true
+  }));
+  
+  result.push(...silenceSegments);
+  
+  // Sort by start time and return
+  return result.sort((a, b) => a.start - b.start);
+}
+
+/**
+ * Splits a single segment by a silence region
+ * Returns array of segments (before silence, after silence, or unchanged)
+ */
+function splitSegmentBySilence(
+  segment: TranscriptSegment,
+  silence: SilenceRegion
+): TranscriptSegment[] {
+  // No overlap - return original segment
+  if (segment.end <= silence.start || segment.start >= silence.end) {
+    return [segment];
+  }
+  
+  const result: TranscriptSegment[] = [];
+  
+  // Part before silence
+  if (segment.start < silence.start) {
+    result.push({
+      ...segment,
+      id: `${segment.id}-before`,
+      end: silence.start,
+      text: segment.text // Keep original text (we can't split text accurately)
+    });
+  }
+  
+  // Part after silence
+  if (segment.end > silence.end) {
+    result.push({
+      ...segment,
+      id: `${segment.id}-after`,
+      start: silence.end,
+      text: segment.text // Keep original text
+    });
+  }
+  
+  // If segment is completely inside silence, discard it
+  // (it will be replaced by the silence segment)
+  
+  return result;
+}
 
 /**
  * Merges speech and silence segments and sorts them by start time
- * @param speechSegments - Array of speech segments
- * @param silenceSegments - Array of silence segments
- * @returns Combined and sorted array of all segments
+ * @deprecated Use splitSegmentsAtSilence instead to avoid overlaps
  */
 export function mergeTranscriptWithSilence(
   speechSegments: TranscriptSegment[],

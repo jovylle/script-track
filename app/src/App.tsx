@@ -670,7 +670,7 @@ function App() {
       
       // Use smart splitting algorithm to avoid overlaps
       const { splitSegmentsAtSilence } = await import('./utils/transcriptUtils');
-      const allSegments = splitSegmentsAtSilence(speechSegments, silenceRegions);
+      const allSegments = splitSegmentsAtSilence(speechSegments, silenceRegions, 0.3);
       
       await logToTerminal(`📊 SPLITTING RESULTS: ${speechSegments.length} speech → ${allSegments.length} total segments`);
       

@@ -1014,10 +1014,10 @@ function App() {
                               <label className="setting-item" title="Noise level to detect as silent - lower values detect quieter sounds">
                                 Noise Level: 
                                 <div className="setting-description">
-                                  {noiseThreshold <= -50 && "Very Sensitive"}
+                                  {noiseThreshold <= -50 && "Conservative (very sensitive)"}
                                   {noiseThreshold > -50 && noiseThreshold <= -40 && "Balanced (recommended)"}
-                                  {noiseThreshold > -40 && noiseThreshold <= -30 && "Conservative"}
-                                  {noiseThreshold > -30 && "Very Conservative"}
+                                  {noiseThreshold > -40 && noiseThreshold <= -30 && "Aggressive"}
+                                  {noiseThreshold > -30 && "Very Aggressive"}
                                 </div>
                                 <input
                                   type="range" 
@@ -1066,7 +1066,7 @@ function App() {
                             <button 
                               className="preset-btn aggressive"
                               onClick={() => {
-                                setNoiseThreshold(-50);
+                                setNoiseThreshold(-30);
                                 setMinSilenceDuration(0.3);
                                 console.log('🎯 PRESET: Aggressive - removes all pauses');
                               }}
@@ -1088,7 +1088,7 @@ function App() {
                             <button 
                               className="preset-btn conservative"
                               onClick={() => {
-                                setNoiseThreshold(-30);
+                                setNoiseThreshold(-50);
                                 setMinSilenceDuration(1.0);
                                 console.log('🎯 PRESET: Conservative - only true silence');
                               }}

@@ -22,7 +22,7 @@ export function splitSegmentsAtSilence(
       const newSegments: TranscriptSegment[] = [];
       
       for (const seg of remainingSegments) {
-        const splits = splitSegmentBySilence(seg, silence);
+        const splits = splitSegmentBySilence(seg, silence, minSegmentDuration);
         newSegments.push(...splits);
       }
       
@@ -54,7 +54,8 @@ export function splitSegmentsAtSilence(
  */
 function splitSegmentBySilence(
   segment: TranscriptSegment,
-  silence: SilenceRegion
+  silence: SilenceRegion,
+  minSegmentDuration: number
 ): TranscriptSegment[] {
   // No overlap - return original segment
   if (segment.end <= silence.start || segment.start >= silence.end) {

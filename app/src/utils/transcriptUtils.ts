@@ -4,11 +4,13 @@ import type { TranscriptSegment, SilenceRegion } from '../types';
  * Splits word segments at silence boundaries to avoid overlaps
  * @param wordSegments - Original word segments from Whisper
  * @param silenceRegions - Detected silence regions from FFmpeg
+ * @param minSegmentDuration - Minimum duration for split segments (default: 0.3s)
  * @returns Non-overlapping segments (words + silence)
  */
 export function splitSegmentsAtSilence(
   wordSegments: TranscriptSegment[],
-  silenceRegions: SilenceRegion[]
+  silenceRegions: SilenceRegion[],
+  minSegmentDuration: number = 0.3
 ): TranscriptSegment[] {
   const result: TranscriptSegment[] = [];
   
@@ -63,24 +65,32 @@ function splitSegmentBySilence(
   
   // Part before silence
   if (segment.start < silence.start) {
-    result.push({
-      ...segment,
-      id: `${segment.id}-before`,
-      end: silence.start,
-      text: segment.text,
-      isSplit: true // Mark as split segment
-    });
+    const beforeDuration = silence.start - segment.start;
+    // Only keep if it's long enough to contain meaningful speech
+    if (beforeDuration >= minSegmentDuration) {
+      result.push({
+        ...segment,
+        id: `${segment.id}-before`,
+        end: silence.start,
+        text: segment.text,
+        isSplit: true // Mark as split segment
+      });
+    }
   }
   
   // Part after silence
   if (segment.end > silence.end) {
-    result.push({
-      ...segment,
-      id: `${segment.id}-after`,
-      start: silence.end,
-      text: segment.text,
-      isSplit: true // Mark as split segment
-    });
+    const afterDuration = segment.end - silence.end;
+    // Only keep if it's long enough to contain meaningful speech
+    if (afterDuration >= minSegmentDuration) {
+      result.push({
+        ...segment,
+        id: `${segment.id}-after`,
+        start: silence.end,
+        text: segment.text,
+        isSplit: true // Mark as split segment
+      });
+    }
   }
   
   // If segment is completely inside silence, discard it

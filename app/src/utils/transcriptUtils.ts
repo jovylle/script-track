@@ -5,12 +5,14 @@ import type { TranscriptSegment, SilenceRegion } from '../types';
  * @param wordSegments - Original word segments from Whisper
  * @param silenceRegions - Detected silence regions from FFmpeg
  * @param minSegmentDuration - Minimum duration for split segments (default: 0.3s)
+ * @param silencePadding - Padding to add before/after silence for natural cuts (default: 0.1s)
  * @returns Non-overlapping segments (words + silence)
  */
 export function splitSegmentsAtSilence(
   wordSegments: TranscriptSegment[],
   silenceRegions: SilenceRegion[],
-  minSegmentDuration: number = 0.3
+  minSegmentDuration: number = 0.3,
+  silencePadding: number = 0.1
 ): TranscriptSegment[] {
   const result: TranscriptSegment[] = [];
   
@@ -32,11 +34,11 @@ export function splitSegmentsAtSilence(
     result.push(...remainingSegments);
   }
   
-  // Add silence segments
+  // Add silence segments with small padding for natural cuts
   const silenceSegments = silenceRegions.map((region, i) => ({
     id: `silence-${i}-${Date.now()}`,
-    start: region.start,
-    end: region.end,
+    start: Math.max(0, region.start - silencePadding), // Add buffer before
+    end: region.end + silencePadding, // Add buffer after
     text: `[Silence: ${region.duration.toFixed(1)}s]`,
     keep: true,
     isSilence: true

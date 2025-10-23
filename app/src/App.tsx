@@ -60,6 +60,7 @@ function App() {
   const [excludedSilenceRegions, setExcludedSilenceRegions] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
   const [exportedFilePath, setExportedFilePath] = useState<string | null>(null);
+  const [silenceSettingsExpanded, setSilenceSettingsExpanded] = useState(false);
   
   // Undo/Redo for silence detection
   const [transcriptHistory, setTranscriptHistory] = useState<TranscriptSegment[][]>([]);
@@ -1004,7 +1005,7 @@ function App() {
                           <div className="silence-help">
                             <span className="help-icon">ℹ️</span>
                             <span className="help-text">
-                              Audio-based silence detection using FFmpeg analysis
+                              FFmpeg-based quiet parts detection
                             </span>
                           </div>
                           
@@ -1012,11 +1013,10 @@ function App() {
                             <label>
                               Noise Level: 
                               <div className="setting-description">
-                                Audio below this level will be marked as silence
-                                {noiseThreshold <= -50 && " (Very Sensitive - catches quiet moments)"}
-                                {noiseThreshold > -50 && noiseThreshold <= -40 && " (Balanced - recommended)"}
-                                {noiseThreshold > -40 && noiseThreshold <= -30 && " (Conservative - only true silence)"}
-                                {noiseThreshold > -30 && " (Very Conservative - only complete silence)"}
+                                {noiseThreshold <= -50 && "Very Sensitive"}
+                                {noiseThreshold > -50 && noiseThreshold <= -40 && "Balanced (recommended)"}
+                                {noiseThreshold > -40 && noiseThreshold <= -30 && "Conservative"}
+                                {noiseThreshold > -30 && "Very Conservative"}
                               </div>
                               <input
                                 type="range" 

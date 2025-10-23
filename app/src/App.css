@@ -906,6 +906,17 @@ body {
   border-color: #ff9800;
 }
 
+.detection-buttons .test-tone-btn {
+  background: rgba(76, 175, 80, 0.1);
+  border-color: #4caf50;
+  color: #4caf50;
+}
+
+.detection-buttons .test-tone-btn:hover {
+  background: rgba(76, 175, 80, 0.2);
+  border-color: #4caf50;
+}
+
 /* Responsive design */
 @media (max-width: 1200px) {
   .transcript-panel {

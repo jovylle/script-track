@@ -907,6 +907,37 @@ async fn analyze_audio_levels(
 }
 
 #[tauri::command]
+async fn play_test_tone(volume_db: f64, duration: f64) -> Result<(), String> {
+    use std::process::Command;
+    
+    println!("🎵 Playing test tone at {}dB for {}s", volume_db, duration);
+    
+    // Generate a test tone at the specified volume level
+    // We'll use FFmpeg to generate a sine wave at 1000Hz
+    let output = Command::new("ffplay")
+        .arg("-f")
+        .arg("lavfi")
+        .arg("-i")
+        .arg(&format!("sine=frequency=1000:duration={}", duration))
+        .arg("-volume")
+        .arg(&format!("{}", (volume_db + 60.0) * 2.0)) // Convert dB to volume scale
+        .arg("-autoexit")
+        .arg("-nodisp")
+        .output();
+    
+    match output {
+        Ok(_) => {
+            println!("✅ Test tone played successfully");
+            Ok(())
+        }
+        Err(e) => {
+            println!("❌ Failed to play test tone: {}", e);
+            Err(format!("Failed to play test tone: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
 async fn play_audio_segment(
     file_path: String,
     start_time: f64,
@@ -957,7 +988,8 @@ pub fn run() {
                     open_file_location,
                     analyze_audio_levels,
                     analyze_audio_for_presets,
-                    play_audio_segment
+                    play_audio_segment,
+                    play_test_tone
                 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

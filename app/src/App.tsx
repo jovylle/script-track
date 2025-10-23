@@ -1163,6 +1163,47 @@ function App() {
                               📊 Analyze Audio
                             </button>
                             <button 
+                              className="test-tone-btn" 
+                              onClick={async () => {
+                                try {
+                                  await logToTerminal(`🎵 Playing test tone at current threshold: ${noiseThreshold}dB`);
+                                  await invoke('play_test_tone', {
+                                    volumeDb: noiseThreshold,
+                                    duration: 2.0
+                                  });
+                                  await logToTerminal(`✅ Test tone played at ${noiseThreshold}dB`);
+                                } catch (error) {
+                                  await logToTerminal(`❌ Test tone failed: ${error}`);
+                                }
+                              }}
+                            >
+                              🔊 Test {noiseThreshold}dB
+                            </button>
+                            
+                            <button 
+                              className="test-tone-btn" 
+                              onClick={async () => {
+                                try {
+                                  await logToTerminal(`🎵 Playing test tones at common levels...`);
+                                  const levels = [-30, -40, -50, -60];
+                                  for (const level of levels) {
+                                    await logToTerminal(`  🔊 Playing ${level}dB tone...`);
+                                    await invoke('play_test_tone', {
+                                      volumeDb: level,
+                                      duration: 1.5
+                                    });
+                                    await new Promise(resolve => setTimeout(resolve, 500)); // Pause between tones
+                                  }
+                                  await logToTerminal(`✅ Test tone sequence complete`);
+                                } catch (error) {
+                                  await logToTerminal(`❌ Test tone sequence failed: ${error}`);
+                                }
+                              }}
+                            >
+                              🎵 Test Levels
+                            </button>
+                            
+                            <button 
                               className="play-audio-btn" 
                               onClick={async () => {
                                 if (!videoPath) {

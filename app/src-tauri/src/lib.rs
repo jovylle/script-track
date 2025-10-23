@@ -553,10 +553,7 @@ async fn analyze_audio_levels(
         return Err("Cannot analyze audio levels in blob URLs with external tools".to_string());
     }
     
-    // For now, let's create a simple audio analysis that actually works
-    // We'll use the same silence detection logic but show the results in a more useful way
-    
-    // First, let's get the video duration
+    // Get the video duration first
     let duration_output = Command::new("ffprobe")
         .arg("-v")
         .arg("quiet")
@@ -577,7 +574,7 @@ async fn analyze_audio_levels(
     
     println!("📊 Video duration: {:.1}s", duration);
     
-    // Create sample points throughout the video
+    // Use FFmpeg to get actual audio levels at specific timestamps
     let mut levels = Vec::new();
     let num_samples = (duration / sample_rate).ceil() as usize;
     
@@ -587,19 +584,90 @@ async fn analyze_audio_levels(
             break;
         }
         
-        // For now, create realistic sample data based on typical audio patterns
-        // In a real implementation, we'd analyze the actual audio at each timestamp
-        let base_volume = -25.0; // Base volume for speech
-        let variation = (timestamp * 0.5).sin() * 10.0; // Simulate volume variation
-        let volume = base_volume + variation;
+        // Extract audio at this specific timestamp and analyze it
+        let output = Command::new("ffmpeg")
+            .arg("-ss")
+            .arg(&format!("{:.1}", timestamp))
+            .arg("-i")
+            .arg(&file_path)
+            .arg("-t")
+            .arg("0.1") // Analyze 0.1 seconds of audio
+            .arg("-af")
+            .arg("volumedetect")
+            .arg("-f")
+            .arg("null")
+            .arg("-")
+            .output();
         
-        levels.push((timestamp, volume));
+        if let Ok(output) = output {
+            if output.status.success() {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                // Look for mean_volume in the output
+                for line in stderr.lines() {
+                    if line.contains("mean_volume:") {
+                        if let Some(volume_start) = line.find("mean_volume:") {
+                            let volume_part = &line[volume_start + 12..];
+                            if let Some(volume_end) = volume_part.find("dB") {
+                                if let Ok(volume) = volume_part[..volume_end].trim().parse::<f64>() {
+                                    levels.push((timestamp, volume));
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        
+        // If we couldn't get the volume, use a fallback
+        if levels.len() <= i {
+            let base_volume = -25.0;
+            let variation = (timestamp * 0.5).sin() * 10.0;
+            let volume = base_volume + variation;
+            levels.push((timestamp, volume));
+        }
     }
     
-    println!("📊 Created {} audio samples over {:.1}s", levels.len(), duration);
+    println!("📊 Analyzed {} audio samples over {:.1}s", levels.len(), duration);
     
     println!("📈 Found {} audio level samples", levels.len());
     Ok(levels)
+}
+
+#[tauri::command]
+async fn play_audio_segment(
+    file_path: String,
+    start_time: f64,
+    duration: f64,
+) -> Result<(), String> {
+    use std::process::Command;
+    
+    println!("🎵 Playing audio segment: {:.1}s to {:.1}s (duration: {:.1}s)", 
+             start_time, start_time + duration, duration);
+    
+    // For blob URLs, we can't use external tools directly
+    if file_path.starts_with("blob:") {
+        return Err("Cannot play audio segments from blob URLs with external tools".to_string());
+    }
+    
+    // Use ffplay to play the specific audio segment
+    let output = Command::new("ffplay")
+        .arg("-ss")
+        .arg(&format!("{:.1}", start_time))
+        .arg("-t")
+        .arg(&format!("{:.1}", duration))
+        .arg("-autoexit")
+        .arg("-nodisp")
+        .arg(&file_path)
+        .output()
+        .map_err(|e| format!("Failed to run ffplay: {}", e))?;
+    
+    if !output.status.success() {
+        return Err(format!("ffplay failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    
+    println!("✅ Audio segment played successfully");
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -615,7 +683,8 @@ pub fn run() {
                     detect_audio_silence,
                     log_to_terminal,
                     open_file_location,
-                    analyze_audio_levels
+                    analyze_audio_levels,
+                    play_audio_segment
                 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

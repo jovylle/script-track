@@ -877,6 +877,16 @@ body {
   border-color: #ffa500;
 }
 
+.detection-buttons .play-audio-btn {
+  border-color: #9c27b0;
+  background: rgba(156, 39, 176, 0.1);
+}
+
+.detection-buttons .play-audio-btn:hover {
+  background: rgba(156, 39, 176, 0.2);
+  border-color: #9c27b0;
+}
+
 /* Loading overlay */
 .loading-overlay {
   position: fixed;

@@ -1122,21 +1122,24 @@ function App() {
                                   });
                                   await logToTerminal(`📈 Audio analysis complete: ${levels.length} samples`);
                                   
-                                  // Show first 10 and last 10 samples
+                                  // Show first 10 and last 10 samples with play buttons
                                   const showCount = Math.min(10, levels.length);
-                                  await logToTerminal(`🔍 FIRST ${showCount} SAMPLES:`);
+                                  await logToTerminal(`🔍 FIRST ${showCount} SAMPLES (click to play 1 second):`);
                                   for (let i = 0; i < showCount; i++) {
                                     const [timestamp, volume] = levels[i];
-                                    await logToTerminal(`  ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
+                                    await logToTerminal(`  🎵 ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
                                   }
                                   
                                   if (levels.length > 20) {
-                                    await logToTerminal(`🔍 LAST ${showCount} SAMPLES:`);
+                                    await logToTerminal(`🔍 LAST ${showCount} SAMPLES (click to play 1 second):`);
                                     for (let i = levels.length - showCount; i < levels.length; i++) {
                                       const [timestamp, volume] = levels[i];
-                                      await logToTerminal(`  ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
+                                      await logToTerminal(`  🎵 ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
                                     }
                                   }
+                                  
+                                  // Add instructions for playing audio
+                                  await logToTerminal(`🎧 TO LISTEN TO AUDIO: Click the "🎵 Play Audio" button below to hear specific segments`);
                                   
                                   // Show volume range
                                   const volumes = levels.map(([_, vol]) => vol);
@@ -1156,6 +1159,37 @@ function App() {
                               }}
                             >
                               📊 Analyze Audio
+                            </button>
+                            <button 
+                              className="play-audio-btn" 
+                              onClick={async () => {
+                                if (!videoPath) {
+                                  alert('Please upload a video first');
+                                  return;
+                                }
+                                const timestamp = prompt('Enter timestamp to play (e.g., 5.2 for 5.2 seconds):');
+                                if (timestamp) {
+                                  const time = parseFloat(timestamp);
+                                  if (!isNaN(time) && time >= 0) {
+                                    try {
+                                      await logToTerminal(`🎵 Playing audio at ${time}s for 1 second...`);
+                                      await invoke('play_audio_segment', {
+                                        filePath: videoPath,
+                                        startTime: time,
+                                        duration: 1.0
+                                      });
+                                      await logToTerminal(`✅ Audio played from ${time}s to ${time + 1}s`);
+                                    } catch (error) {
+                                      console.error('Audio playback failed:', error);
+                                      await logToTerminal(`❌ Audio playback failed: ${error}`);
+                                    }
+                                  } else {
+                                    alert('Please enter a valid number');
+                                  }
+                                }
+                              }}
+                            >
+                              🎵 Play Audio
                             </button>
                           </div>
                         </div>

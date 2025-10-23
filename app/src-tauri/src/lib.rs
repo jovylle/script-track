@@ -28,6 +28,15 @@ pub struct AppState {
     pub initialized: bool,
 }
 
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AudioPresetAnalysis {
+    pub talking_average: f64,
+    pub silence_average: f64,
+    pub suggested_balanced: f64,
+    pub suggested_aggressive: f64,
+    pub suggested_conservative: f64,
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self { 
@@ -714,6 +723,92 @@ async fn open_file_location(file_path: String) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn analyze_audio_for_presets(file_path: String) -> Result<AudioPresetAnalysis, String> {
+    println!("📊 Analyzing audio for preset suggestions...");
+    
+    // For blob URLs, we can't use external tools directly
+    if file_path.starts_with("blob:") {
+        return Err("Cannot analyze blob URLs with external tools".to_string());
+    }
+    
+    // Get overall audio statistics
+    let output = Command::new("ffmpeg")
+        .arg("-i")
+        .arg(&file_path)
+        .arg("-af")
+        .arg("volumedetect")
+        .arg("-f")
+        .arg("null")
+        .arg("-")
+        .arg("-v")
+        .arg("quiet")
+        .output();
+    
+    match output {
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            
+            // Parse volume statistics
+            let mut max_volume = -100.0;
+            let mut mean_volume = -100.0;
+            
+            for line in stderr.lines() {
+                if line.contains("max_volume:") {
+                    if let Some(volume_str) = line.split("max_volume:").nth(1) {
+                        if let Some(volume) = volume_str.split("dB").next() {
+                            if let Ok(vol) = volume.trim().parse::<f64>() {
+                                max_volume = vol;
+                            }
+                        }
+                    }
+                }
+                if line.contains("mean_volume:") {
+                    if let Some(volume_str) = line.split("mean_volume:").nth(1) {
+                        if let Some(volume) = volume_str.split("dB").next() {
+                            if let Ok(vol) = volume.trim().parse::<f64>() {
+                                mean_volume = vol;
+                            }
+                        }
+                    }
+                }
+            }
+            
+            // Calculate suggested thresholds
+            let talking_avg = mean_volume;
+            let silence_avg = talking_avg - 20.0; // Assume silence is ~20dB quieter
+            
+            // Suggest balanced threshold (halfway between talking and silence)
+            let balanced_threshold = (talking_avg + silence_avg) / 2.0;
+            
+            // Suggest aggressive threshold (closer to talking level)
+            let aggressive_threshold = talking_avg - 5.0;
+            
+            // Suggest conservative threshold (closer to silence level)
+            let conservative_threshold = silence_avg + 5.0;
+            
+            println!("📊 Audio Analysis Results:");
+            println!("  Talking average: {:.1}dB", talking_avg);
+            println!("  Silence average: {:.1}dB", silence_avg);
+            println!("  Suggested balanced: {:.1}dB", balanced_threshold);
+            println!("  Suggested aggressive: {:.1}dB", aggressive_threshold);
+            println!("  Suggested conservative: {:.1}dB", conservative_threshold);
+            
+            Ok(AudioPresetAnalysis {
+                talking_average: talking_avg,
+                silence_average: silence_avg,
+                suggested_balanced: balanced_threshold,
+                suggested_aggressive: aggressive_threshold,
+                suggested_conservative: conservative_threshold,
+            })
+        }
+        Err(e) => {
+            println!("❌ Failed to analyze audio: {}", e);
+            Err(format!("Failed to analyze audio: {}", e))
+        }
+    }
+}
+
+#[tauri::command]
 async fn analyze_audio_levels(
     file_path: String,
     sample_rate: f64, // How often to sample (e.g., every 0.1 seconds)
@@ -859,6 +954,7 @@ pub fn run() {
                     log_to_terminal,
                     open_file_location,
                     analyze_audio_levels,
+                    analyze_audio_for_presets,
                     play_audio_segment
                 ])
         .run(tauri::generate_context!())

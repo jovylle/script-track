@@ -1010,51 +1010,53 @@ function App() {
                           </div>
                           
                           <div className="audio-settings">
-                            <label>
-                              Noise Level: 
-                              <div className="setting-description">
-                                {noiseThreshold <= -50 && "Very Sensitive"}
-                                {noiseThreshold > -50 && noiseThreshold <= -40 && "Balanced (recommended)"}
-                                {noiseThreshold > -40 && noiseThreshold <= -30 && "Conservative"}
-                                {noiseThreshold > -30 && "Very Conservative"}
-                              </div>
-                              <input
-                                type="range" 
-                                min="-60" 
-                                max="-10" 
-                                step="5"
-                                value={noiseThreshold}
-                                onChange={(e) => {
-                                  const newThreshold = parseFloat(e.target.value);
-                                  console.log('🔇 NOISE THRESHOLD CHANGED:', { 
-                                    from: noiseThreshold, 
-                                    to: newThreshold 
-                                  });
-                                  setNoiseThreshold(newThreshold);
-                                }}
-                              />
-                              <span>{noiseThreshold}dB</span>
-                            </label>
-                            
-                            <label>
-                              Min Duration: 
-                              <input
-                                type="range" 
-                                min="0.1" 
-                                max="2.0" 
-                                step="0.1"
-                                value={minSilenceDuration}
-                                onChange={(e) => {
-                                  const newDuration = parseFloat(e.target.value);
-                                  console.log('🔇 MIN DURATION CHANGED:', { 
-                                    from: minSilenceDuration, 
-                                    to: newDuration 
-                                  });
-                                  setMinSilenceDuration(newDuration);
-                                }}
-                              />
-                              <span>{minSilenceDuration}s</span>
-                            </label>
+                            <div className="settings-row">
+                              <label className="setting-item">
+                                Noise Level: 
+                                <div className="setting-description">
+                                  {noiseThreshold <= -50 && "Very Sensitive"}
+                                  {noiseThreshold > -50 && noiseThreshold <= -40 && "Balanced (recommended)"}
+                                  {noiseThreshold > -40 && noiseThreshold <= -30 && "Conservative"}
+                                  {noiseThreshold > -30 && "Very Conservative"}
+                                </div>
+                                <input
+                                  type="range" 
+                                  min="-60" 
+                                  max="-10" 
+                                  step="5"
+                                  value={noiseThreshold}
+                                  onChange={(e) => {
+                                    const newThreshold = parseFloat(e.target.value);
+                                    console.log('🔇 NOISE THRESHOLD CHANGED:', { 
+                                      from: noiseThreshold, 
+                                      to: newThreshold 
+                                    });
+                                    setNoiseThreshold(newThreshold);
+                                  }}
+                                />
+                                <span>{noiseThreshold}dB</span>
+                              </label>
+                              
+                              <label className="setting-item">
+                                Min Duration: 
+                                <input
+                                  type="range" 
+                                  min="0.1" 
+                                  max="2.0" 
+                                  step="0.1"
+                                  value={minSilenceDuration}
+                                  onChange={(e) => {
+                                    const newDuration = parseFloat(e.target.value);
+                                    console.log('🔇 MIN DURATION CHANGED:', { 
+                                      from: minSilenceDuration, 
+                                      to: newDuration 
+                                    });
+                                    setMinSilenceDuration(newDuration);
+                                  }}
+                                />
+                                <span>{minSilenceDuration}s</span>
+                              </label>
+                            </div>
                           </div>
                           
                           {/* Preset buttons for quick configuration */}

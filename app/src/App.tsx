@@ -47,7 +47,7 @@ function App() {
   const [isExporting, setIsExporting] = useState(false);
   const [editingSegment, setEditingSegment] = useState<number | string | null>(null);
   const [editText, setEditText] = useState('');
-  const [silenceThreshold, setSilenceThreshold] = useState(1.0);
+  // Removed silenceThreshold - no longer using gap-based detection
   const [showSilenceSettings, setShowSilenceSettings] = useState(false);
   const [noiseThreshold, setNoiseThreshold] = useState(-30.0);
   const [minSilenceDuration, setMinSilenceDuration] = useState(0.5);
@@ -663,12 +663,13 @@ function App() {
       await logToTerminal(`📋 SPEECH SEGMENTS: ${speechSegments.length}`);
       
       // Convert silence regions to transcript segments
+      // Default to keep: true (included), users can exclude them manually
       const silentSegments: TranscriptSegment[] = silenceRegions.map((region, index) => ({
         id: `silence-${index}-${Date.now()}`,
         start: region.start,
         end: region.end,
         text: `[Silence: ${region.duration.toFixed(1)}s]`,
-        keep: false,
+        keep: true,
         isSilence: true
       }));
       
@@ -691,82 +692,7 @@ function App() {
       
     } catch (error) {
       await logToTerminal(`❌ Error detecting silence: ${error}`);
-      // Fallback to the old gap-based method if audio detection fails
-      await logToTerminal('🔄 Falling back to gap-based detection...');
-      detectSilentPartsGapBased();
-    }
-  };
-  
-  // Fallback method using the old gap-based approach
-  const detectSilentPartsGapBased = async () => {
-    await logToTerminal(`🔇 DETECTING SILENT PARTS (Gap-Based Fallback): threshold=${silenceThreshold}s, segments=${transcript.length}`);
-    
-    // Remove existing silence segments first
-    const speechSegments = transcript.filter(s => !s.isSilence);
-    await logToTerminal(`📋 SPEECH SEGMENTS: ${speechSegments.length}`);
-    
-    const silentSegments: TranscriptSegment[] = [];
-    
-    // Look for gaps in the timeline
-    await logToTerminal('🔍 ANALYZING TIMELINE FOR GAPS');
-    
-    // Sort segments by start time
-    const sortedSegments = [...speechSegments].sort((a, b) => a.start - b.start);
-    
-    await logToTerminal(`📊 Analyzing ${sortedSegments.length} individual word segments for gaps...`);
-    
-    for (let i = 0; i < sortedSegments.length - 1; i++) {
-      const current = sortedSegments[i];
-      const next = sortedSegments[i + 1];
-      
-      // Calculate the actual gap between segments
-      const gap = next.start - current.end;
-      
-      if (gap > silenceThreshold) {
-        await logToTerminal(`  ✅ Gap ${i}: ${gap.toFixed(2)}s detected between "${current.text}" and "${next.text}"`);
-        silentSegments.push({
-          id: `silence-${i}-${Date.now()}`,
-          start: current.end,
-          end: next.start,
-          text: `[Silence: ${gap.toFixed(1)}s]`,
-          keep: false,
-          isSilence: true
-        });
-      }
-    }
-    
-    // Also check for silence at the beginning and end
-    const firstSegment = sortedSegments[0];
-    const lastSegment = sortedSegments[sortedSegments.length - 1];
-    
-    // Check for silence at the beginning
-    if (firstSegment && firstSegment.start > 0.5) {
-      const startGap = firstSegment.start;
-      if (startGap > silenceThreshold) {
-        await logToTerminal(`✅ SILENCE AT START: ${startGap.toFixed(2)}s`);
-        silentSegments.push({
-          id: `silence-start-${Date.now()}`,
-          start: 0,
-          end: firstSegment.start,
-          text: `[Silence at start: ${startGap.toFixed(1)}s]`,
-          keep: false,
-          isSilence: true
-        });
-      }
-    }
-    
-    await logToTerminal(`🔇 SILENCE DETECTION RESULTS: Found ${silentSegments.length} gaps`);
-    
-    // Combine speech and silence segments
-    const combined = [...speechSegments, ...silentSegments].sort((a, b) => a.start - b.start);
-    setTranscript(combined);
-    setHasSilenceDetection(true);
-    saveToHistory(combined);
-    
-    if (silentSegments.length === 0) {
-      await logToTerminal('❌ No silent parts found. Try lowering the threshold or check if your video has actual pauses.');
-    } else {
-      await logToTerminal(`✅ Found ${silentSegments.length} silent parts using gap-based fallback`);
+      alert(`Silence detection failed: ${error}`);
     }
   };
 
@@ -1119,34 +1045,6 @@ function App() {
                                 }}
                               />
                               <span>{minSilenceDuration}s</span>
-                            </label>
-                          </div>
-                          
-                          <div className="fallback-settings">
-                            <div className="fallback-help">
-                              <span className="help-icon">⚠️</span>
-                              <span className="help-text">
-                                Fallback: Gap-based detection (if audio analysis fails)
-                              </span>
-                            </div>
-                            <label>
-                              Gap Threshold: 
-                              <input
-                                type="range" 
-                                min="0.5" 
-                                max="3" 
-                                step="0.5"
-                                value={silenceThreshold}
-                                onChange={(e) => {
-                                  const newThreshold = parseFloat(e.target.value);
-                                  console.log('🔇 GAP THRESHOLD CHANGED:', { 
-                                    from: silenceThreshold, 
-                                    to: newThreshold 
-                                  });
-                                  setSilenceThreshold(newThreshold);
-                                }}
-                              />
-                              <span>{silenceThreshold}s</span>
                             </label>
                           </div>
                           

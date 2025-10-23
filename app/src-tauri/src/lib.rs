@@ -406,17 +406,18 @@ async fn detect_audio_silence(
         return Err("Cannot detect silence in blob URLs with external tools".to_string());
     }
     
-    // Run FFmpeg with silencedetect filter
+    // Use a different approach - detect "quiet parts" instead of true silence
+    // We'll analyze the audio in chunks and find parts below the threshold
     let output = Command::new("ffmpeg")
         .arg("-i")
         .arg(&file_path)
         .arg("-af")
-        .arg(format!("silencedetect=noise={}dB:d={}", noise_threshold, min_duration))
+        .arg("astats=metadata=1:reset=1")
         .arg("-f")
         .arg("null")
         .arg("-")
         .arg("-v")
-        .arg("info") // Ensure we get the silencedetect output
+        .arg("info")
         .output();
     
     match output {
@@ -424,9 +425,9 @@ async fn detect_audio_silence(
             let stderr = String::from_utf8_lossy(&result.stderr);
             println!("FFmpeg stderr output:\n{}", stderr);
             
-            // Parse the silencedetect output
-            let silence_regions = parse_silence_output(&stderr);
-            println!("Found {} silence regions", silence_regions.len());
+            // Parse the audio statistics to find quiet parts
+            let silence_regions = parse_quiet_parts(&stderr, noise_threshold, min_duration);
+            println!("Found {} quiet regions", silence_regions.len());
             
             for (i, region) in silence_regions.iter().enumerate() {
                 println!("  Region {}: {:.2}s - {:.2}s (duration: {:.2}s)", 
@@ -442,44 +443,84 @@ async fn detect_audio_silence(
     }
 }
 
-fn parse_silence_output(output: &str) -> Vec<SilenceRegion> {
+fn parse_quiet_parts(output: &str, threshold: f64, min_duration: f64) -> Vec<SilenceRegion> {
     use regex::Regex;
     
-    let mut silence_regions = Vec::new();
+    let mut quiet_regions = Vec::new();
+    let mut quiet_samples = Vec::new();
     
-    // Regex patterns to match FFmpeg silencedetect output
-    let silence_start_re = Regex::new(r"silence_start:\s*([0-9.]+)").unwrap();
-    let silence_end_re = Regex::new(r"silence_end:\s*([0-9.]+).*silence_duration:\s*([0-9.]+)").unwrap();
+    // Parse audio statistics to find quiet parts
+    let rms_re = Regex::new(r"lavfi\.astats\.Overall\.RMS_level:\s*([0-9.-]+)").unwrap();
+    let time_re = Regex::new(r"pts_time:\s*([0-9.]+)").unwrap();
     
-    let mut current_start: Option<f64> = None;
+    let mut current_time = 0.0;
     
     for line in output.lines() {
-        // Look for silence_start
-        if let Some(caps) = silence_start_re.captures(line) {
-            if let Ok(start) = caps[1].parse::<f64>() {
-                current_start = Some(start);
-                println!("Found silence start at: {:.2}s", start);
+        // Extract timestamp
+        if let Some(caps) = time_re.captures(line) {
+            if let Ok(time) = caps[1].parse::<f64>() {
+                current_time = time;
             }
         }
         
-        // Look for silence_end
-        if let Some(caps) = silence_end_re.captures(line) {
-            if let (Ok(end), Ok(duration)) = (caps[1].parse::<f64>(), caps[2].parse::<f64>()) {
-                if let Some(start) = current_start {
-                    let region = SilenceRegion {
-                        start,
-                        end,
-                        duration,
-                    };
-                    silence_regions.push(region);
-                    println!("Found silence end at: {:.2}s (duration: {:.2}s)", end, duration);
-                    current_start = None;
+        // Extract RMS level
+        if let Some(caps) = rms_re.captures(line) {
+            if let Ok(rms) = caps[1].parse::<f64>() {
+                // Convert RMS to dB (approximate)
+                let volume_db = if rms > 0.0 {
+                    20.0 * rms.log10()
+                } else {
+                    -100.0
+                };
+                
+                // Check if this sample is below threshold
+                if volume_db < threshold {
+                    quiet_samples.push(current_time);
+                    println!("Quiet sample at {:.2}s: {:.1}dB (below {:.1}dB)", current_time, volume_db, threshold);
                 }
             }
         }
     }
     
-    silence_regions
+    // Group consecutive quiet samples into regions
+    if !quiet_samples.is_empty() {
+        let mut region_start = quiet_samples[0];
+        let mut region_end = quiet_samples[0];
+        
+        for i in 1..quiet_samples.len() {
+            let current = quiet_samples[i];
+            let previous = quiet_samples[i-1];
+            
+            // If samples are close together (within 0.2s), continue the region
+            if current - previous <= 0.2 {
+                region_end = current;
+            } else {
+                // End current region and start new one
+                let duration = region_end - region_start;
+                if duration >= min_duration {
+                    quiet_regions.push(SilenceRegion {
+                        start: region_start,
+                        end: region_end,
+                        duration,
+                    });
+                }
+                region_start = current;
+                region_end = current;
+            }
+        }
+        
+        // Add the last region
+        let duration = region_end - region_start;
+        if duration >= min_duration {
+            quiet_regions.push(SilenceRegion {
+                start: region_start,
+                end: region_end,
+                duration,
+            });
+        }
+    }
+    
+    quiet_regions
 }
 
 #[tauri::command]

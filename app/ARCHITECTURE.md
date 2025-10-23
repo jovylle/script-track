@@ -1,255 +1,210 @@
 # Script-Track Architecture
 
 ## Overview
+Script-Track is a desktop application built with Tauri (Rust + React) for editing screen recordings by manipulating transcribed words. Users can remove silence, edit individual words, and export clean videos.
 
-Script-Track is a desktop application built with Tauri + React that allows users to edit screen recordings by editing the transcript. The app transcribes video/audio using Whisper, detects silence regions, and allows users to cut segments by removing words or silence.
+## Tech Stack
+- **Frontend**: React + TypeScript + Vite
+- **Backend**: Rust + Tauri
+- **Audio Processing**: FFmpeg
+- **Speech Recognition**: Whisper CLI
+- **UI Framework**: Custom CSS with dark theme
 
-## Technology Stack
-
-- **Frontend**: React 18 + TypeScript + Vite
-- **Backend**: Rust + Tauri 2.0
-- **Transcription**: Whisper CLI (OpenAI)
-- **Video Processing**: FFmpeg
-- **Styling**: CSS (component-based)
-
-## Directory Structure
+## Project Structure
 
 ```
-app/
-├── src/
-│   ├── components/          # React components
-│   │   ├── VideoPlayer.tsx  # Video playback with custom controls
-│   │   ├── Transcript.tsx   # Transcript display and editing
-│   │   ├── SilenceControls.tsx # Silence detection settings
-│   │   └── ExportPanel.tsx  # Export controls and progress
-│   ├── hooks/              # Custom React hooks
-│   │   ├── useVideoPlayer.ts    # Video playback state management
-│   │   ├── useTranscript.ts     # Transcript state and editing
-│   │   └── useSilenceDetection.ts # Silence detection logic
-│   ├── utils/              # Utility functions
-│   │   ├── transcriptUtils.ts   # Transcript manipulation
-│   │   ├── silenceUtils.ts      # Silence detection helpers
-│   │   └── fileUtils.ts         # File handling utilities
-│   ├── types/              # TypeScript type definitions
-│   │   └── index.ts        # All interfaces and types
-│   ├── App.tsx            # Main application component
-│   ├── App.css            # Global styles
-│   └── main.tsx           # Application entry point
-├── src-tauri/             # Rust backend
-│   └── src/
-│       └── lib.rs         # Tauri commands and backend logic
-└── ARCHITECTURE.md        # This file
+app/src/
+├── components/          # React components (planned)
+├── hooks/              # Custom React hooks (planned)
+├── utils/              # Utility functions
+│   ├── transcriptUtils.ts
+│   ├── silenceUtils.ts
+│   └── fileUtils.ts
+├── types/              # TypeScript interfaces
+│   └── index.ts
+├── App.tsx             # Main application component
+├── App.css             # Global styles
+└── main.tsx            # React entry point
+
+app/src-tauri/src/
+├── lib.rs              # Rust backend logic
+└── main.rs             # Tauri entry point
+```
 
 ## Data Flow
 
-### 1. Video Upload
+### 1. Video Upload & Transcription
 ```
-User drops/selects video
-  ↓
-Frontend creates blob URL (for player)
-  ↓
-Backend saves file to temp_uploads/
-  ↓
-Frontend stores both blob URL and actual file path
+User drops video → Tauri saves to temp_uploads/ → Whisper CLI transcribes → 
+JSON parsed → Word segments created → React state updated
 ```
 
-### 2. Transcription
+### 2. Silence Detection
 ```
-User clicks Transcribe
-  ↓
-Frontend calls transcribe_audio command
-  ↓
-Backend runs Whisper CLI on video file
-  ↓
-Whisper generates word-level JSON
-  ↓
-Backend parses JSON and returns segments
-  ↓
-Frontend displays segments in transcript
+User clicks "Detect Silence" → FFmpeg analyzes audio → Silence regions detected → 
+Smart splitting algorithm → Word segments trimmed → Silence segments added → 
+UI updated with new segments
 ```
 
-### 3. Silence Detection
+### 3. Word Editing
 ```
-User clicks Detect (Audio-Based)
-  ↓
-Frontend calls detect_audio_silence command
-  ↓
-Backend runs FFmpeg with silencedetect filter
-  ↓
-Backend parses FFmpeg output for silence regions
-  ↓
-Frontend creates silence segments (keep: true by default)
-  ↓
-Frontend merges speech + silence and displays
+User clicks word → Action panel appears → User edits/removes → 
+State updated → Export includes changes
 ```
 
-### 4. Editing
+### 4. Video Export
 ```
-User clicks word/silence segment
-  ↓
-Action panel appears
-  ↓
-User can:
-  - Exclude/Include segment (toggle keep flag)
-  - Edit text (speech segments only)
-  - Use bulk actions (Exclude All / Include All)
+User clicks "Export Video" → FFmpeg processes video → Segments filtered by keep:true → 
+Video exported → File location opened
 ```
 
-### 5. Export
-```
-User clicks Export
-  ↓
-Frontend filters segments (keep: true)
-  ↓
-Frontend calls export_video command
-  ↓
-Backend creates FFmpeg filter_complex
-  ↓
-Backend trims and concatenates segments
-  ↓
-Backend saves edited video
-  ↓
-Frontend shows success + file location button
-```
+## Core Components (Planned)
 
-## Component Hierarchy
+### VideoPlayer Component
+- **Props**: `videoFile`, `currentTime`, `onTimeUpdate`, `onPlay`, `onPause`
+- **Features**: Custom timeline, playback controls, progress tracking
+- **State**: Play/pause, current time, duration
 
-```
-App
-├── VideoPlayer
-│   ├── Video element
-│   ├── Custom timeline (progress bar + scrubber)
-│   └── Play/pause controls
-├── Transcript
-│   ├── Inline word display
-│   ├── Word hover tooltips
-│   ├── Word action panels (cut/edit)
-│   └── Segment highlighting (active/selected/removed)
-├── SilenceControls
-│   ├── Noise level slider
-│   ├── Min duration slider
-│   ├── Detect button
-│   └── Bulk action buttons (Exclude All / Include All)
-└── ExportPanel
-    ├── Export button
-    ├── Progress bar
-    └── Open file location button
-```
+### Transcript Component
+- **Props**: `transcript`, `selectedWordId`, `onWordClick`, `onWordEdit`
+- **Features**: Word display, editing interface, action panels
+- **State**: Selected word, editing mode, action panel visibility
 
-## Custom Hooks
+### SilenceControls Component
+- **Props**: `noiseThreshold`, `minSilenceDuration`, `onDetectSilence`
+- **Features**: Settings sliders, preset buttons, bulk actions
+- **State**: Settings values, detection status
+
+### ExportPanel Component
+- **Props**: `isExporting`, `exportedFilePath`, `onExport`
+- **Features**: Export button, progress indicator, file location
+- **State**: Export status, progress, file path
+
+## Custom Hooks (Planned)
 
 ### useVideoPlayer
-Manages video playback state and controls
-- **State**: videoElement, isPlaying, currentTime, videoDuration
-- **Functions**: play(), pause(), seek(), handleTimeUpdate()
-- **Effects**: Keyboard shortcuts (Space, Arrow keys)
+- Manages video playback state
+- Handles time updates and seeking
+- Controls play/pause functionality
 
 ### useTranscript
-Manages transcript state and editing operations
-- **State**: transcript, transcriptHistory, historyIndex, editingSegment
-- **Functions**: toggleSegment(), startEdit(), saveEdit(), undo(), redo()
-- **Effects**: Saves to history on changes
+- Manages transcript state and history
+- Handles word editing and selection
+- Provides undo/redo functionality
 
 ### useSilenceDetection
-Manages silence detection settings and operations
-- **State**: noiseThreshold, minSilenceDuration, hasSilenceDetection
-- **Functions**: detectSilence(), excludeAllSilence(), includeAllSilence()
-- **Integration**: Calls Tauri backend commands
+- Manages silence detection settings
+- Handles FFmpeg analysis
+- Processes silence regions
 
 ## State Management
 
-### Global State (in App.tsx)
-- File upload state (videoFile, videoPath, isUploading)
-- Transcription state (isTranscribing, transcriptionProgress)
-- Export state (isExporting, exportProgress, exportedFilePath)
-- Selected word state (selectedWordId)
+### Global State (App.tsx)
+- `videoFile`: Blob URL for video player
+- `videoPath`: Actual file path for backend
+- `transcript`: Array of transcript segments
+- `selectedWordId`: Currently selected word
+- `noiseThreshold`: Silence detection sensitivity
+- `minSilenceDuration`: Minimum silence duration
+- `isExporting`: Export status
+- `exportedFilePath`: Path to exported file
 
-### Hook-Managed State
-- Video playback (useVideoPlayer)
-- Transcript data (useTranscript)
-- Silence settings (useSilenceDetection)
+### Local State (Components)
+- Component-specific UI state
+- Form inputs and temporary values
+- Modal and panel visibility
 
-## Tauri Commands (Backend)
+## Backend Architecture
 
-### `save_uploaded_file(fileData, filename)`
-- Saves uploaded file to temp_uploads directory
-- Returns absolute file path
+### Tauri Commands (lib.rs)
+- `transcribe_video`: Runs Whisper CLI and parses JSON
+- `detect_audio_silence`: Uses FFmpeg to find silence regions
+- `export_video`: Processes video with segment filtering
+- `analyze_audio_levels`: Gets detailed audio analysis
+- `play_audio_segment`: Plays specific audio segments
+- `play_test_tone`: Generates test tones for calibration
+- `open_file_location`: Opens file explorer
 
-### `transcribe_audio(filePath)`
-- Runs Whisper CLI on video file
-- Returns TranscriptionResult with word-level segments
+### Data Structures
+```rust
+struct TranscriptSegment {
+    id: u32,
+    start: f64,
+    end: f64,
+    text: String,
+    keep: bool,
+}
 
-### `detect_audio_silence(filePath, noiseThreshold, minDuration)`
-- Runs FFmpeg silencedetect filter
-- Parses output and returns SilenceRegion[]
-
-### `export_video(inputPath, outputPath, segments)`
-- Filters segments for keep: true
-- Creates FFmpeg filter_complex
-- Exports edited video
-
-### `get_video_duration(filePath)`
-- Returns video duration in seconds
-
-### `open_file_location(filePath)`
-- Opens file location in system file manager (Finder/Explorer)
-
-### `log_to_terminal(message)`
-- Logs message to terminal (for debugging)
-
-## Key Interfaces
-
-### TranscriptSegment
-```typescript
-{
-  id: number | string;
-  start: number;        // seconds
-  end: number;          // seconds
-  text: string;
-  keep: boolean;        // include in export
-  isSilence?: boolean;  // silence vs speech
+struct SilenceRegion {
+    start: f64,
+    end: f64,
+    duration: f64,
 }
 ```
 
-### SilenceRegion
-```typescript
-{
-  start: number;    // seconds
-  end: number;      // seconds
-  duration: number; // seconds
-}
-```
+## Key Algorithms
 
-## Design Decisions
+### Smart Segment Splitting
+1. **Input**: Word segments + Silence regions
+2. **Process**: Split overlapping word segments at silence boundaries
+3. **Filter**: Remove split segments shorter than minimum duration
+4. **Output**: Non-overlapping segments (words + silence)
 
-### Why Silence Defaults to Included (keep: true)
-Initially, silence was excluded by default (keep: false), which created UX confusion. Users expected to see silence in the export by default, then manually exclude unwanted parts. Changed to keep: true for intuitive behavior.
+### Silence Detection
+1. **FFmpeg Analysis**: Use `silencedetect` filter
+2. **Padding**: Add 0.1s buffer before/after silence
+3. **Integration**: Split word segments at silence boundaries
+4. **Visualization**: Mark split segments with yellow styling
 
-### Why Remove Gap-Based Fallback
-The gap-based detection method (analyzing gaps between words) was less accurate and confusing. FFmpeg's audio-based detection is superior, so we simplified to only use that method.
+## Performance Considerations
 
-### Why Custom Video Controls
-Built-in browser video controls don't provide the level of control needed for precise editing. Custom timeline allows:
-- Click-to-seek
-- Visual progress indication
-- Integration with transcript playback
-- Keyboard shortcuts
+### Frontend
+- **Lazy Loading**: Components loaded on demand
+- **Memoization**: React.memo for expensive components
+- **Virtual Scrolling**: For large transcripts (future)
 
-### Why Component Extraction
-Original App.tsx was 1350+ lines, making it hard to maintain. Extracted components:
-- Improve code readability
-- Enable independent testing
-- Allow component reuse
-- Separate concerns clearly
+### Backend
+- **Async Processing**: Non-blocking FFmpeg operations
+- **Temp Files**: Cleanup after processing
+- **Error Handling**: Graceful failure recovery
 
-## Future Improvements
+## Security & Privacy
 
-1. **Performance**: Virtualize transcript for large videos (thousands of words)
-2. **Storage**: Implement project save/load functionality
-3. **Export Options**: Add quality settings, codec selection
-4. **Batch Processing**: Support multiple videos at once
-5. **Waveform Display**: Visual audio waveform in timeline
-6. **Undo/Redo UI**: Visible undo/redo buttons
-7. **Keyboard Shortcuts**: More editing shortcuts
-8. **Export Presets**: Save common export configurations
+### File Handling
+- **Local Processing**: All operations happen locally
+- **Temp Storage**: Files stored in temp_uploads/ directory
+- **Cleanup**: Temporary files removed after processing
 
+### Data Privacy
+- **No Network**: No data sent to external services
+- **Local Whisper**: Uses local Whisper installation
+- **User Control**: User owns all data and files
+
+## Future Enhancements
+
+### Planned Features
+- **Component Extraction**: Modular React architecture
+- **Custom Hooks**: Reusable state logic
+- **Advanced Editing**: Word-level timestamps
+- **Batch Processing**: Multiple video support
+- **Preset Management**: Save/load settings
+
+### Technical Improvements
+- **Error Boundaries**: Better error handling
+- **Loading States**: Improved UX during processing
+- **Keyboard Shortcuts**: Power user features
+- **Accessibility**: Screen reader support
+
+## Development Guidelines
+
+### Code Organization
+- **Single Responsibility**: Each component has one purpose
+- **Props Interface**: Clear component contracts
+- **Type Safety**: Full TypeScript coverage
+- **Documentation**: JSDoc for all functions
+
+### Testing Strategy
+- **Unit Tests**: Component and utility testing
+- **Integration Tests**: End-to-end workflows
+- **Performance Tests**: Large file handling
+- **User Testing**: Real-world usage scenarios

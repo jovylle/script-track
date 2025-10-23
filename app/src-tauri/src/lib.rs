@@ -8,6 +8,7 @@ pub struct TranscriptSegment {
     pub end: f64,
     pub text: String,
     pub keep: bool,
+    pub is_silence: Option<bool>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -35,6 +36,12 @@ pub struct AudioPresetAnalysis {
     pub suggested_balanced: f64,
     pub suggested_aggressive: f64,
     pub suggested_conservative: f64,
+}
+
+#[derive(Serialize, Deserialize, Clone)]
+pub struct AudioLevel {
+    pub timestamp: f64,
+    pub volume_db: f64,
 }
 
 impl AppState {
@@ -124,6 +131,7 @@ async fn transcribe_audio(
             end,
             text: text.to_string(),
             keep: true,
+            is_silence: Some(false),
         });
     }
     
@@ -210,6 +218,7 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
                                                     end: word_end,
                                                     text: clean_text.to_string(),
                                                     keep: true,
+                                                    is_silence: Some(false),
                                                 });
                                                 id += 1;
                                             }
@@ -228,6 +237,7 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
                                             end,
                                             text: text.trim().to_string(),
                                             keep: true,
+                                            is_silence: Some(false),
                                         });
                                         id += 1;
                                     }
@@ -493,178 +503,10 @@ fn parse_silence_output(output: &str) -> Vec<SilenceRegion> {
     silence_regions
 }
 
-fn parse_volume_from_output(output: &str) -> Option<f64> {
-    use regex::Regex;
-    
-    // Look for "mean_volume: -XX.X dB" in the output
-    let re = Regex::new(r"mean_volume:\s*(-?\d+\.?\d*)\s*dB").unwrap();
-    
-    if let Some(captures) = re.captures(output) {
-        if let Some(volume_str) = captures.get(1) {
-            if let Ok(volume) = volume_str.as_str().parse::<f64>() {
-                return Some(volume);
-            }
-        }
-    }
-    
-    // If we can't find mean_volume, try other patterns
-    let re_max = Regex::new(r"max_volume:\s*(-?\d+\.?\d*)\s*dB").unwrap();
-    if let Some(captures) = re_max.captures(output) {
-        if let Some(volume_str) = captures.get(1) {
-            if let Ok(volume) = volume_str.as_str().parse::<f64>() {
-                return Some(volume);
-            }
-        }
-    }
-    
-    // Debug: log what we're getting from FFmpeg
-    if !output.trim().is_empty() {
-        println!("    🔍 FFmpeg output: {}", output.chars().take(200).collect::<String>());
-    }
-    
-    None
-}
 
-fn group_quiet_samples(samples: Vec<(f64, f64)>, min_duration: f64) -> Vec<SilenceRegion> {
-    if samples.is_empty() {
-        println!("🔍 No quiet samples to group");
-        return Vec::new();
-    }
-    
-    println!("🔍 Grouping {} quiet samples with min duration {:.1}s", samples.len(), min_duration);
-    
-    let mut regions = Vec::new();
-    let mut current_start = samples[0].0;
-    let mut current_end = samples[0].0 + 0.1; // Each sample is 0.1s
-    let mut current_samples = 1;
-    
-    for (time, _volume) in samples.iter().skip(1) {
-        // If this sample is within 0.2s of the current region, extend it
-        if *time <= current_end + 0.2 {
-            current_end = *time + 0.1;
-            current_samples += 1;
-        } else {
-            // Start a new region
-            let duration = current_end - current_start;
-            println!("  📊 Region candidate: {:.1}s-{:.1}s (duration: {:.1}s, samples: {})", 
-                current_start, current_end, duration, current_samples);
-            
-            if duration >= min_duration {
-                regions.push(SilenceRegion {
-                    start: current_start,
-                    end: current_end,
-                    duration,
-                });
-                println!("    ✅ Added region (duration >= {:.1}s)", min_duration);
-            } else {
-                println!("    ❌ Skipped region (duration < {:.1}s)", min_duration);
-            }
-            
-            current_start = *time;
-            current_end = *time + 0.1;
-            current_samples = 1;
-        }
-    }
-    
-    // Add the last region
-    let duration = current_end - current_start;
-    println!("  📊 Final region candidate: {:.1}s-{:.1}s (duration: {:.1}s, samples: {})", 
-        current_start, current_end, duration, current_samples);
-    
-    if duration >= min_duration {
-        regions.push(SilenceRegion {
-            start: current_start,
-            end: current_end,
-            duration,
-        });
-        println!("    ✅ Added final region (duration >= {:.1}s)", min_duration);
-    } else {
-        println!("    ❌ Skipped final region (duration < {:.1}s)", min_duration);
-    }
-    
-    println!("🔍 Grouping complete: {} regions created", regions.len());
-    regions
-}
 
-fn parse_quiet_parts(output: &str, threshold: f64, min_duration: f64) -> Vec<SilenceRegion> {
-    use regex::Regex;
-    
-    let mut quiet_regions = Vec::new();
-    let mut quiet_samples = Vec::new();
-    
-    // Parse audio statistics to find quiet parts
-    let rms_re = Regex::new(r"lavfi\.astats\.Overall\.RMS_level:\s*([0-9.-]+)").unwrap();
-    let time_re = Regex::new(r"pts_time:\s*([0-9.]+)").unwrap();
-    
-    let mut current_time = 0.0;
-    
-    for line in output.lines() {
-        // Extract timestamp
-        if let Some(caps) = time_re.captures(line) {
-            if let Ok(time) = caps[1].parse::<f64>() {
-                current_time = time;
-            }
-        }
-        
-        // Extract RMS level
-        if let Some(caps) = rms_re.captures(line) {
-            if let Ok(rms) = caps[1].parse::<f64>() {
-                // Convert RMS to dB (approximate)
-                let volume_db = if rms > 0.0 {
-                    20.0 * rms.log10()
-                } else {
-                    -100.0
-                };
-                
-                // Check if this sample is below threshold
-                if volume_db < threshold {
-                    quiet_samples.push(current_time);
-                    println!("Quiet sample at {:.2}s: {:.1}dB (below {:.1}dB)", current_time, volume_db, threshold);
-                }
-            }
-        }
-    }
-    
-    // Group consecutive quiet samples into regions
-    if !quiet_samples.is_empty() {
-        let mut region_start = quiet_samples[0];
-        let mut region_end = quiet_samples[0];
-        
-        for i in 1..quiet_samples.len() {
-            let current = quiet_samples[i];
-            let previous = quiet_samples[i-1];
-            
-            // If samples are close together (within 0.2s), continue the region
-            if current - previous <= 0.2 {
-                region_end = current;
-            } else {
-                // End current region and start new one
-                let duration = region_end - region_start;
-                if duration >= min_duration {
-                    quiet_regions.push(SilenceRegion {
-                        start: region_start,
-                        end: region_end,
-                        duration,
-                    });
-                }
-                region_start = current;
-                region_end = current;
-            }
-        }
-        
-        // Add the last region
-        let duration = region_end - region_start;
-        if duration >= min_duration {
-            quiet_regions.push(SilenceRegion {
-                start: region_start,
-                end: region_end,
-                duration,
-            });
-        }
-    }
-    
-    quiet_regions
-}
+// NOTE: This function was removed because astats approach doesn't work for time-based analysis
+// astats gives overall statistics, not per-sample data - DON'T USE FOR VISUALIZATION
 
 #[tauri::command]
 async fn open_file_location(file_path: String) -> Result<(), String> {
@@ -751,7 +593,7 @@ async fn analyze_audio_for_presets(file_path: String) -> Result<AudioPresetAnaly
             let stderr = String::from_utf8_lossy(&result.stderr);
             
             // Parse volume statistics
-            let mut max_volume = -100.0;
+            let mut _max_volume = -100.0;
             let mut mean_volume = -100.0;
             
             for line in stderr.lines() {
@@ -759,7 +601,7 @@ async fn analyze_audio_for_presets(file_path: String) -> Result<AudioPresetAnaly
                     if let Some(volume_str) = line.split("max_volume:").nth(1) {
                         if let Some(volume) = volume_str.split("dB").next() {
                             if let Ok(vol) = volume.trim().parse::<f64>() {
-                                max_volume = vol;
+                                _max_volume = vol;
                             }
                         }
                     }
@@ -907,6 +749,127 @@ async fn analyze_audio_levels(
 }
 
 #[tauri::command]
+async fn auto_detect_silence_threshold(
+    file_path: String,
+    transcript_segments: Vec<TranscriptSegment>,
+) -> Result<f64, String> {
+    use std::process::Command;
+    
+    println!("🧠 Auto-detecting optimal silence threshold...");
+    
+    // For blob URLs, we can't use external tools directly
+    if file_path.starts_with("blob:") {
+        return Err("Cannot analyze blob URLs with external tools".to_string());
+    }
+    
+    if transcript_segments.is_empty() {
+        return Err("No transcript segments provided for analysis".to_string());
+    }
+    
+    let mut speech_volumes = Vec::new();
+    let mut gap_volumes = Vec::new();
+    
+    // Sample audio levels at middle of each speech segment
+    for segment in &transcript_segments {
+        if segment.is_silence != Some(true) {
+            let middle_time = (segment.start + segment.end) / 2.0;
+            
+            let output = Command::new("ffmpeg")
+                .args([
+                    "-ss", &middle_time.to_string(),
+                    "-i", &file_path,
+                    "-t", "0.1",
+                    "-af", "volumedetect",
+                    "-f", "null",
+                    "-"
+                ])
+                .output();
+            
+            if let Ok(output) = output {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                for line in stderr.lines() {
+                    if line.contains("mean_volume:") {
+                        if let Some(start_pos) = line.find("mean_volume: ") {
+                            let volume_str = &line[start_pos + 13..];
+                            if let Some(end_pos) = volume_str.find(' ') {
+                                if let Ok(vol) = volume_str[..end_pos].parse::<f64>() {
+                                    speech_volumes.push(vol);
+                                    println!("  🗣️ Speech at {:.1}s: {:.1}dB", middle_time, vol);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Sample audio levels in gaps between segments
+    for i in 0..transcript_segments.len() - 1 {
+        let current_end = transcript_segments[i].end;
+        let next_start = transcript_segments[i + 1].start;
+        
+        if next_start > current_end + 0.2 { // Gap of at least 0.2s
+            let gap_middle = (current_end + next_start) / 2.0;
+            
+            let output = Command::new("ffmpeg")
+                .args([
+                    "-ss", &gap_middle.to_string(),
+                    "-i", &file_path,
+                    "-t", "0.1",
+                    "-af", "volumedetect",
+                    "-f", "null",
+                    "-"
+                ])
+                .output();
+            
+            if let Ok(output) = output {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                for line in stderr.lines() {
+                    if line.contains("mean_volume:") {
+                        if let Some(start_pos) = line.find("mean_volume: ") {
+                            let volume_str = &line[start_pos + 13..];
+                            if let Some(end_pos) = volume_str.find(' ') {
+                                if let Ok(vol) = volume_str[..end_pos].parse::<f64>() {
+                                    gap_volumes.push(vol);
+                                    println!("  🔇 Gap at {:.1}s: {:.1}dB", gap_middle, vol);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Calculate averages
+    let speech_avg = if !speech_volumes.is_empty() {
+        speech_volumes.iter().sum::<f64>() / speech_volumes.len() as f64
+    } else {
+        -30.0 // Default speech level
+    };
+    
+    let gap_avg = if !gap_volumes.is_empty() {
+        gap_volumes.iter().sum::<f64>() / gap_volumes.len() as f64
+    } else {
+        -50.0 // Default silence level
+    };
+    
+    // Calculate optimal threshold: use gap average + small buffer
+    // This ensures we detect silence (below threshold) but not speech (above threshold)
+    let optimal_threshold = gap_avg + 10.0; // 10dB above gap level
+    
+    println!("📊 Analysis results:");
+    println!("  🗣️ Average speech volume: {:.1}dB ({} samples)", speech_avg, speech_volumes.len());
+    println!("  🔇 Average gap volume: {:.1}dB ({} samples)", gap_avg, gap_volumes.len());
+    println!("  🎯 Optimal threshold: {:.1}dB", optimal_threshold);
+    
+    Ok(optimal_threshold)
+}
+
+#[tauri::command]
 async fn get_audio_visualization_data(
     file_path: String,
     sample_rate: f64,
@@ -937,13 +900,14 @@ async fn get_audio_visualization_data(
     println!("📊 Video duration: {}s", duration);
     
     let mut levels = Vec::new();
+    // Use volumedetect with time-based analysis to get real audio levels
     let mut current_time = 0.0;
     
     while current_time < duration {
         let output = Command::new("ffmpeg")
             .args([
-                "-i", &file_path,
                 "-ss", &current_time.to_string(),
+                "-i", &file_path,
                 "-t", &sample_rate.to_string(),
                 "-af", "volumedetect",
                 "-f", "null",
@@ -954,15 +918,35 @@ async fn get_audio_visualization_data(
         match output {
             Ok(output) => {
                 let output_str = String::from_utf8_lossy(&output.stderr);
-                if let Some(volume) = parse_volume_from_output(&output_str) {
-                    levels.push(AudioLevel {
-                        timestamp: current_time,
-                        volume_db: volume,
-                    });
+                
+                // Parse volumedetect output to get mean volume
+                let mut volume_db = -40.0; // Default speech level
+                for line in output_str.lines() {
+                    if line.contains("mean_volume:") {
+                        if let Some(start_pos) = line.find("mean_volume: ") {
+                            let volume_str = &line[start_pos + 13..];
+                            if let Some(end_pos) = volume_str.find(' ') {
+                                if let Ok(vol) = volume_str[..end_pos].parse::<f64>() {
+                                    volume_db = vol;
+                                    break;
+                                }
+                            }
+                        }
+                    }
                 }
+                
+                levels.push(AudioLevel {
+                    timestamp: current_time,
+                    volume_db,
+                });
             }
             Err(e) => {
                 println!("❌ Error analyzing chunk at {}s: {}", current_time, e);
+                // Add default level for this chunk
+                levels.push(AudioLevel {
+                    timestamp: current_time,
+                    volume_db: -40.0,
+                });
             }
         }
         
@@ -1051,6 +1035,7 @@ pub fn run() {
                     export_video,
                     get_video_duration,
                     detect_audio_silence,
+                    auto_detect_silence_threshold,
                     log_to_terminal,
                     open_file_location,
                     analyze_audio_levels,

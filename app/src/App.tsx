@@ -10,6 +10,7 @@ interface TranscriptSegment {
   text: string;
   keep: boolean;
   isSilence?: boolean;
+  isSplit?: boolean;
 }
 
 interface SilenceRegion {
@@ -50,14 +51,11 @@ function App() {
   const [transcriptionProgress, setTranscriptionProgress] = useState(0);
   const [exportProgress, setExportProgress] = useState(0);
   const [isExporting, setIsExporting] = useState(false);
-  const [editingSegment, setEditingSegment] = useState<number | string | null>(null);
-  const [editText, setEditText] = useState('');
   // Removed silenceThreshold - no longer using gap-based detection
   const [showSilenceSettings, setShowSilenceSettings] = useState(false);
-  const [noiseThreshold, setNoiseThreshold] = useState(-40.0); // More sensitive default
   const [minSilenceDuration, setMinSilenceDuration] = useState(0.5);
   const [audioBoost, setAudioBoost] = useState(1.0);
-  const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
+  const [playbackSpeed] = useState(1.0);
   const [currentSegmentId, setCurrentSegmentId] = useState<number | string | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState(true);
   const [exportETA, setExportETA] = useState<string>('');
@@ -66,7 +64,6 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [exportedFilePath, setExportedFilePath] = useState<string | null>(null);
   const [audioVisualizationData, setAudioVisualizationData] = useState<AudioLevel[]>([]);
-  const [silenceSettingsExpanded, setSilenceSettingsExpanded] = useState(false);
   
   // Undo/Redo for silence detection
   const [transcriptHistory, setTranscriptHistory] = useState<TranscriptSegment[][]>([]);
@@ -557,25 +554,7 @@ function App() {
     });
   };
 
-  const handleStartEdit = (segment: TranscriptSegment) => {
-    setEditingSegment(segment.id);
-    setEditText(segment.text);
-  };
 
-  const handleSaveEdit = () => {
-    if (editingSegment !== null) {
-      setTranscript(prev => prev.map(seg => 
-        seg.id === editingSegment ? { ...seg, text: editText } : seg
-      ));
-      setEditingSegment(null);
-      setEditText('');
-    }
-  };
-
-  const handleCancelEdit = () => {
-    setEditingSegment(null);
-    setEditText('');
-  };
 
   const handleExport = async () => {
     console.log('🎬 EXPORT BUTTON CLICKED');
@@ -654,7 +633,7 @@ function App() {
   };
 
   const detectSilentParts = async () => {
-    await logToTerminal(`🔇 DETECTING SILENT PARTS (Audio-Based): threshold=${noiseThreshold}dB, minDuration=${minSilenceDuration}s, segments=${transcript.length}`);
+    await logToTerminal(`🔇 DETECTING SILENT PARTS (Auto Smart Detection): minDuration=${minSilenceDuration}s, segments=${transcript.length}`);
     
     if (!videoPath) {
       await logToTerminal('❌ No video path available for silence detection');
@@ -666,13 +645,22 @@ function App() {
     await logToTerminal(`🎯 Video duration: ${videoDuration}s, Transcript segments: ${transcript.length}`);
     
     try {
+      // First, auto-detect the optimal noise threshold
+      await logToTerminal('🧠 Auto-detecting optimal silence threshold...');
+      const autoThreshold = await invoke<number>('auto_detect_silence_threshold', {
+        filePath: videoPath,
+        transcriptSegments: transcript.filter(s => !s.isSilence) // Only pass speech segments
+      });
+      
+      await logToTerminal(`🎯 Auto-detected optimal threshold: ${autoThreshold.toFixed(1)}dB`);
+      
       // Call the Rust backend to detect actual silence in the audio
       await logToTerminal('🎵 Calling FFmpeg silence detection...');
-      await logToTerminal(`📊 Parameters: noise_threshold=${noiseThreshold}dB, min_duration=${minSilenceDuration}s`);
+      await logToTerminal(`📊 Parameters: auto_threshold=${autoThreshold.toFixed(1)}dB, min_duration=${minSilenceDuration}s`);
       
       const silenceRegions: SilenceRegion[] = await invoke('detect_audio_silence', {
         filePath: videoPath,
-        noiseThreshold,
+        noiseThreshold: autoThreshold,
         minDuration: minSilenceDuration
       });
       
@@ -766,7 +754,6 @@ function App() {
           <div className="workspace">
             <div className="video-panel">
               <div className="video-container">
-                {console.log('🎬 Rendering video element, videoFile:', videoFile)}
                 {videoFile ? (
                   <video
                     ref={setVideoElement}
@@ -911,7 +898,7 @@ function App() {
                               // -60dB = 0%, -10dB = 100%
                               const height = Math.max(0, Math.min(100, ((level.volume_db + 60) / 50) * 100));
                               const isCurrentTime = Math.abs(level.timestamp - currentTime) < 0.1;
-                              const isSilence = level.volume_db < noiseThreshold;
+                              const isSilence = level.volume_db < -40; // Default threshold for visualization
                               
                               return (
                                 <div
@@ -933,7 +920,7 @@ function App() {
                             </div>
                             <div className="legend-item">
                               <div className="legend-color silence"></div>
-                              <span>Silence (below {noiseThreshold}dB)</span>
+                              <span>Silence (below -40dB)</span>
                             </div>
                             <div className="legend-item">
                               <div className="legend-color current"></div>
@@ -981,7 +968,6 @@ function App() {
                         const totalDuration = transcript.reduce((sum, seg) => sum + (seg.end - seg.start), 0);
                         const keptDuration = transcript.filter(s => s.keep).reduce((sum, seg) => sum + (seg.end - seg.start), 0);
                         const removedDuration = totalDuration - keptDuration;
-                        const savedPercentage = totalDuration > 0 ? ((removedDuration / totalDuration) * 100).toFixed(1) : '0';
                         
                         const formatTime = (seconds: number) => {
                           const mins = Math.floor(seconds / 60);
@@ -1002,10 +988,6 @@ function App() {
                             <div className="stat">
                               <span className="stat-label">Removed:</span>
                               <span className="stat-value red">{formatTime(removedDuration)}</span>
-                            </div>
-                            <div className="stat">
-                              <span className="stat-label">Saved:</span>
-                              <span className="stat-value highlight">{savedPercentage}%</span>
                             </div>
                           </>
                         );
@@ -1073,41 +1055,13 @@ function App() {
                       {showSilenceSettings && (
                         <div className="silence-settings">
                           <div className="silence-help">
-                            <span className="help-icon">ℹ️</span>
                             <span className="help-text">
-                              FFmpeg-based quiet parts detection
+                              Auto smart silence detection - automatically finds optimal threshold
                             </span>
                           </div>
                           
                           <div className="audio-settings">
                             <div className="settings-row">
-                              <label className="setting-item" title="Noise level to detect as silent - lower values detect quieter sounds">
-                                Noise Level: 
-                                <div className="setting-description">
-                                  {noiseThreshold <= -50 && "Conservative (very sensitive)"}
-                                  {noiseThreshold > -50 && noiseThreshold <= -40 && "Balanced (recommended)"}
-                                  {noiseThreshold > -40 && noiseThreshold <= -30 && "Aggressive"}
-                                  {noiseThreshold > -30 && "Very Aggressive"}
-                                </div>
-                                <input
-                                  type="range" 
-                                  min="-60" 
-                                  max="-10" 
-                                  step="5"
-                                  value={noiseThreshold}
-                                  onChange={(e) => {
-                                    const newThreshold = parseFloat(e.target.value);
-                                    console.log('🔇 NOISE THRESHOLD CHANGED:', { 
-                                      from: noiseThreshold, 
-                                      to: newThreshold 
-                                    });
-                                    setNoiseThreshold(newThreshold);
-                                  }}
-                                  title="Noise level to detect as silent - lower values detect quieter sounds"
-                                />
-                                <span>{noiseThreshold}dB</span>
-                              </label>
-                              
                               <label className="setting-item" title="Minimum duration for silence to be detected - shorter pauses will be ignored">
                                 Min Duration: 
                                 <input
@@ -1131,43 +1085,6 @@ function App() {
                             </div>
                           </div>
                           
-                          {/* Preset buttons for quick configuration */}
-                          <div className="preset-buttons">
-                            <button 
-                              className="preset-btn aggressive"
-                              onClick={() => {
-                                setNoiseThreshold(-30);
-                                setMinSilenceDuration(0.3);
-                                console.log('🎯 PRESET: Aggressive - removes all pauses');
-                              }}
-                              title="Removes all pauses and quiet moments"
-                            >
-                              Aggressive
-                            </button>
-                            <button 
-                              className="preset-btn balanced"
-                              onClick={() => {
-                                setNoiseThreshold(-40);
-                                setMinSilenceDuration(0.5);
-                                console.log('🎯 PRESET: Balanced - removes long pauses');
-                              }}
-                              title="Removes long pauses (recommended)"
-                            >
-                              Balanced
-                            </button>
-                            <button 
-                              className="preset-btn conservative"
-                              onClick={() => {
-                                setNoiseThreshold(-50);
-                                setMinSilenceDuration(1.0);
-                                console.log('🎯 PRESET: Conservative - only true silence');
-                              }}
-                              title="Only removes complete silence"
-                            >
-                              Conservative
-                            </button>
-                          </div>
-                          
                           <div className="detection-buttons">
                             <button 
                               className="detect-btn" 
@@ -1179,132 +1096,6 @@ function App() {
                               }}
                             >
                               🎵 Detect Silence
-                            </button>
-                            <button 
-                              className="analyze-btn" 
-                              onClick={async () => {
-                                if (!videoPath) {
-                                  alert('Please upload a video first');
-                                  return;
-                                }
-                                console.log('📊 ANALYZE AUDIO LEVELS BUTTON CLICKED');
-                                try {
-                                  await logToTerminal('📊 Starting audio level analysis...');
-                                  const levels = await invoke<Array<[number, number]>>('analyze_audio_levels', {
-                                    filePath: videoPath,
-                                    sampleRate: 0.1 // Sample every 0.1 seconds
-                                  });
-                                  await logToTerminal(`📈 Audio analysis complete: ${levels.length} samples`);
-                                  
-                                  // Show first 10 and last 10 samples with play buttons
-                                  const showCount = Math.min(10, levels.length);
-                                  await logToTerminal(`🔍 FIRST ${showCount} SAMPLES (click to play 1 second):`);
-                                  for (let i = 0; i < showCount; i++) {
-                                    const [timestamp, volume] = levels[i];
-                                    await logToTerminal(`  🎵 ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
-                                  }
-                                  
-                                  if (levels.length > 20) {
-                                    await logToTerminal(`🔍 LAST ${showCount} SAMPLES (click to play 1 second):`);
-                                    for (let i = levels.length - showCount; i < levels.length; i++) {
-                                      const [timestamp, volume] = levels[i];
-                                      await logToTerminal(`  🎵 ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
-                                    }
-                                  }
-                                  
-                                  // Add instructions for playing audio
-                                  await logToTerminal(`🎧 TO LISTEN TO AUDIO: Click the "🎵 Play Audio" button below to hear specific segments`);
-                                  
-                                  // Show volume range
-                                  const volumes = levels.map(([_, vol]) => vol);
-                                  const minVol = Math.min(...volumes);
-                                  const maxVol = Math.max(...volumes);
-                                  const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
-                                  await logToTerminal(`📊 VOLUME RANGE: ${minVol.toFixed(1)}dB to ${maxVol.toFixed(1)}dB (avg: ${avgVol.toFixed(1)}dB)`);
-                                  
-                                  // Show how this compares to current threshold
-                                  await logToTerminal(`🎯 CURRENT THRESHOLD: ${noiseThreshold}dB`);
-                                  const belowThreshold = volumes.filter(vol => vol < noiseThreshold).length;
-                                  await logToTerminal(`📉 SAMPLES BELOW THRESHOLD: ${belowThreshold}/${levels.length} (${(belowThreshold/levels.length*100).toFixed(1)}%)`);
-                                } catch (error) {
-                                  console.error('Audio analysis failed:', error);
-                                  await logToTerminal(`❌ Audio analysis failed: ${error}`);
-                                }
-                              }}
-                            >
-                              📊 Analyze Audio
-                            </button>
-                            <button 
-                              className="test-tone-btn" 
-                              onClick={async () => {
-                                try {
-                                  await logToTerminal(`🎵 Playing test tone at current threshold: ${noiseThreshold}dB`);
-                                  await invoke('play_test_tone', {
-                                    volumeDb: noiseThreshold,
-                                    duration: 2.0
-                                  });
-                                  await logToTerminal(`✅ Test tone played at ${noiseThreshold}dB`);
-                                } catch (error) {
-                                  await logToTerminal(`❌ Test tone failed: ${error}`);
-                                }
-                              }}
-                            >
-                              🔊 Test {noiseThreshold}dB
-                            </button>
-                            
-                            <button 
-                              className="test-tone-btn" 
-                              onClick={async () => {
-                                try {
-                                  await logToTerminal(`🎵 Playing test tones at common levels...`);
-                                  const levels = [-30, -40, -50, -60];
-                                  for (const level of levels) {
-                                    await logToTerminal(`  🔊 Playing ${level}dB tone...`);
-                                    await invoke('play_test_tone', {
-                                      volumeDb: level,
-                                      duration: 1.5
-                                    });
-                                    await new Promise(resolve => setTimeout(resolve, 500)); // Pause between tones
-                                  }
-                                  await logToTerminal(`✅ Test tone sequence complete`);
-                                } catch (error) {
-                                  await logToTerminal(`❌ Test tone sequence failed: ${error}`);
-                                }
-                              }}
-                            >
-                              🎵 Test Levels
-                            </button>
-                            
-                            <button 
-                              className="play-audio-btn" 
-                              onClick={async () => {
-                                if (!videoPath) {
-                                  alert('Please upload a video first');
-                                  return;
-                                }
-                                const timestamp = prompt('Enter timestamp to play (e.g., 5.2 for 5.2 seconds):');
-                                if (timestamp) {
-                                  const time = parseFloat(timestamp);
-                                  if (!isNaN(time) && time >= 0) {
-                                    try {
-                                      await logToTerminal(`🎵 Playing audio at ${time}s for 1 second...`);
-                                      await invoke('play_audio_segment', {
-                                        filePath: videoPath,
-                                        startTime: time,
-                                        duration: 1.0
-                                      });
-                                      await logToTerminal(`✅ Audio played from ${time}s to ${time + 1}s`);
-                                    } catch (error) {
-                                      console.error('Audio playback failed:', error);
-                                      await logToTerminal(`❌ Audio playback failed: ${error}`);
-                                    }
-                                  } else {
-                                    alert('Please enter a valid number');
-                                  }
-                                }
-                              }}
-                            >
-                              🎵 Play Audio
                             </button>
                           </div>
                         </div>
@@ -1404,7 +1195,7 @@ function App() {
                               id: segment.id,
                               text: segment.text
                             });
-                            handleStartEdit(segment);
+                            // Edit functionality removed
                           }
                         }}
                       >
@@ -1465,7 +1256,7 @@ function App() {
                                   className="action-btn edit-btn"
                                   onClick={(e) => {
                                     e.stopPropagation();
-                                    handleStartEdit(segment);
+                                    // Edit functionality removed
                                   }}
                                   title="Edit text"
                                 >

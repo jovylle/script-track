@@ -830,6 +830,53 @@ body {
   border-color: #4CAF50;
 }
 
+/* Detection buttons */
+.detection-buttons {
+  display: flex;
+  gap: 0.5rem;
+  margin: 1rem 0;
+}
+
+.detection-buttons .detect-btn,
+.detection-buttons .analyze-btn {
+  flex: 1;
+  padding: 0.6rem 1rem;
+  border: 1px solid #555;
+  border-radius: 6px;
+  background: #333;
+  color: #f0f0f0;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.detection-buttons .detect-btn:hover,
+.detection-buttons .analyze-btn:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+}
+
+.detection-buttons .detect-btn {
+  border-color: #61dafb;
+  background: rgba(97, 218, 251, 0.1);
+}
+
+.detection-buttons .detect-btn:hover {
+  background: rgba(97, 218, 251, 0.2);
+  border-color: #61dafb;
+}
+
+.detection-buttons .analyze-btn {
+  border-color: #ffa500;
+  background: rgba(255, 165, 0, 0.1);
+}
+
+.detection-buttons .analyze-btn:hover {
+  background: rgba(255, 165, 0, 0.2);
+  border-color: #ffa500;
+}
+
 /* Loading overlay */
 .loading-overlay {
   position: fixed;

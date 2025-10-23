@@ -673,12 +673,25 @@ function App() {
       
       await logToTerminal(`📊 SPLITTING RESULTS: ${speechSegments.length} speech → ${allSegments.length} total segments`);
       
+      // Show detailed breakdown
+      const wordSegments = allSegments.filter(s => !s.isSilence);
+      const silenceSegments = allSegments.filter(s => s.isSilence);
+      await logToTerminal(`📋 BREAKDOWN: ${wordSegments.length} word segments, ${silenceSegments.length} silence segments`);
+      
+      // Show first few segments for debugging
+      await logToTerminal(`🔍 FIRST 10 SEGMENTS:`);
+      for (let i = 0; i < Math.min(10, allSegments.length); i++) {
+        const seg = allSegments[i];
+        const type = seg.isSilence ? '🔇 SILENCE' : '🗣️ SPEECH';
+        await logToTerminal(`  ${i + 1}. ${type}: ${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s "${seg.text.substring(0, 30)}${seg.text.length > 30 ? '...' : ''}"`);
+      }
+      
       // Save to history and update transcript
       saveToHistory(transcript);
       setTranscript(allSegments);
       setHasSilenceDetection(true);
       
-      await logToTerminal(`✅ Audio-based silence detection complete: ${silentSegments.length} silence regions added`);
+      await logToTerminal(`✅ Audio-based silence detection complete: ${silenceRegions.length} silence regions added`);
       
     } catch (error) {
       await logToTerminal(`❌ Error detecting silence: ${error}`);
@@ -1081,17 +1094,49 @@ function App() {
                             </button>
                           </div>
                           
-                          <button 
-                            className="detect-btn" 
-                            onClick={() => {
-                              console.log('🔍 DETECT SILENCE BUTTON CLICKED');
-                              console.log('🔍 About to call detectSilentParts function...');
-                              detectSilentParts();
-                              console.log('🔍 detectSilentParts function completed');
-                            }}
-                          >
-                            🎵 Detect (Audio-Based)
-                          </button>
+                          <div className="detection-buttons">
+                            <button 
+                              className="detect-btn" 
+                              onClick={() => {
+                                console.log('🔍 DETECT SILENCE BUTTON CLICKED');
+                                console.log('🔍 About to call detectSilentParts function...');
+                                detectSilentParts();
+                                console.log('🔍 detectSilentParts function completed');
+                              }}
+                            >
+                              🎵 Detect Silence
+                            </button>
+                            <button 
+                              className="analyze-btn" 
+                              onClick={async () => {
+                                if (!videoPath) {
+                                  alert('Please upload a video first');
+                                  return;
+                                }
+                                console.log('📊 ANALYZE AUDIO LEVELS BUTTON CLICKED');
+                                try {
+                                  await logToTerminal('📊 Starting audio level analysis...');
+                                  const levels = await invoke<Array<[number, number]>>('analyze_audio_levels', {
+                                    filePath: videoPath,
+                                    sampleRate: 0.1 // Sample every 0.1 seconds
+                                  });
+                                  await logToTerminal(`📈 Audio analysis complete: ${levels.length} samples`);
+                                  for (let i = 0; i < Math.min(levels.length, 20); i++) {
+                                    const [timestamp, volume] = levels[i];
+                                    await logToTerminal(`  ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
+                                  }
+                                  if (levels.length > 20) {
+                                    await logToTerminal(`  ... and ${levels.length - 20} more samples`);
+                                  }
+                                } catch (error) {
+                                  console.error('Audio analysis failed:', error);
+                                  await logToTerminal(`❌ Audio analysis failed: ${error}`);
+                                }
+                              }}
+                            >
+                              📊 Analyze Audio
+                            </button>
+                          </div>
                         </div>
                       )}
                       

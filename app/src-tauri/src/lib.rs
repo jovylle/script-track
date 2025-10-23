@@ -406,132 +406,82 @@ async fn detect_audio_silence(
         return Err("Cannot detect silence in blob URLs with external tools".to_string());
     }
     
-    // Use chunk-based analysis to find quiet parts
-    // First, get the video duration
-    let duration_output = Command::new("ffprobe")
-        .arg("-v")
-        .arg("quiet")
-        .arg("-show_entries")
-        .arg("format=duration")
-        .arg("-of")
-        .arg("csv=p=0")
+    // Use FFmpeg's silencedetect filter - much simpler and more accurate!
+    let output = Command::new("ffmpeg")
+        .arg("-i")
         .arg(&file_path)
+        .arg("-af")
+        .arg(&format!("silencedetect=noise={}dB:duration={}", noise_threshold, min_duration))
+        .arg("-f")
+        .arg("null")
+        .arg("-")
+        .arg("-v")
+        .arg("info")
         .output();
     
-    let duration: f64 = match duration_output {
+    match output {
         Ok(result) => {
-            let output_str = String::from_utf8_lossy(&result.stdout);
-            output_str.trim().parse().unwrap_or(0.0)
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            println!("🔍 FFmpeg output:\n{}", stderr);
+            
+            // Parse silence regions from silencedetect output
+            let silence_regions = parse_silence_output(&stderr);
+            println!("🎯 Found {} silence regions", silence_regions.len());
+            
+            for (i, region) in silence_regions.iter().enumerate() {
+                println!("  Region {}: {:.2}s - {:.2}s (duration: {:.2}s)", 
+                    i + 1, region.start, region.end, region.duration);
+            }
+            
+            Ok(silence_regions)
         }
-        Err(_) => {
-            println!("❌ Failed to get video duration");
-            return Err("Failed to get video duration".to_string());
+        Err(e) => {
+            println!("❌ Failed to run FFmpeg: {}", e);
+            Err(format!("Failed to run FFmpeg: {}", e))
         }
-    };
+    }
+}
+
+fn parse_silence_output(output: &str) -> Vec<SilenceRegion> {
+    use regex::Regex;
     
-    println!("📊 Video duration: {:.1}s", duration);
+    let mut silence_regions = Vec::new();
     
-    // Analyze audio in 0.1s chunks
-    let chunk_size = 0.1;
-    let mut quiet_samples = Vec::new();
-    let total_chunks = (duration / chunk_size) as usize;
+    // Look for silence_start and silence_end patterns
+    let start_re = Regex::new(r"silence_start:\s*(\d+\.?\d*)").unwrap();
+    let end_re = Regex::new(r"silence_end:\s*(\d+\.?\d*)").unwrap();
     
-    println!("🔍 Starting chunk analysis: {} chunks of {:.1}s each", total_chunks, chunk_size);
-    println!("🎯 Looking for chunks below {}dB", noise_threshold);
+    let mut current_start: Option<f64> = None;
     
-    for chunk_start in (0..(duration as i32 * 10)).step_by(1) {
-        let start_time = chunk_start as f64 * chunk_size;
-        let _end_time = (start_time + chunk_size).min(duration);
-        
-        if start_time >= duration {
-            break;
-        }
-        
-        // Show progress every 10 chunks
-        if chunk_start % 10 == 0 {
-            println!("📊 Processing chunk {}/{} at {:.1}s", chunk_start + 1, total_chunks, start_time);
-        }
-        
-        // Analyze this chunk
-        let chunk_output = Command::new("ffmpeg")
-            .arg("-i")
-            .arg(&file_path)
-            .arg("-ss")
-            .arg(&format!("{:.1}", start_time))
-            .arg("-t")
-            .arg(&format!("{:.1}", chunk_size))
-            .arg("-af")
-            .arg("volumedetect")
-            .arg("-f")
-            .arg("null")
-            .arg("-")
-            .arg("-v")
-            .arg("info")
-            .output();
-        
-        match chunk_output {
-            Ok(result) => {
-                let stderr = String::from_utf8_lossy(&result.stderr);
-                let stdout = String::from_utf8_lossy(&result.stdout);
-                
-                // Debug: show what FFmpeg is actually returning
-                if chunk_start < 3 {
-                    println!("  🔍 FFmpeg stdout: {}", stdout.chars().take(200).collect::<String>());
-                    println!("  🔍 FFmpeg stderr: {}", stderr.chars().take(200).collect::<String>());
+    for line in output.lines() {
+        if let Some(captures) = start_re.captures(line) {
+            if let Some(start_str) = captures.get(1) {
+                if let Ok(start) = start_str.as_str().parse::<f64>() {
+                    current_start = Some(start);
+                    println!("  🔍 Found silence start: {:.2}s", start);
                 }
-                
-                // Parse volume from volumedetect output
-                if let Some(volume) = parse_volume_from_output(&stderr) {
-                    let is_quiet = volume < noise_threshold;
-                    
-                    // Log every quiet chunk and every 20th chunk for debugging
-                    if is_quiet || chunk_start % 20 == 0 {
-                        println!("  🎵 {:.1}s: {:.1}dB {}", 
-                            start_time, volume, 
-                            if is_quiet { "🔇 QUIET!" } else { "🔊 loud" }
-                        );
-                    }
-                    
-                    if is_quiet {
-                        quiet_samples.push((start_time, volume));
-                    }
-                } else {
-                    // Log when we can't parse volume
-                    if chunk_start % 50 == 0 {
-                        println!("  ❌ {:.1}s: Could not parse volume from FFmpeg output", start_time);
-                        println!("     FFmpeg stderr: {}", stderr.chars().take(100).collect::<String>());
+            }
+        }
+        
+        if let Some(captures) = end_re.captures(line) {
+            if let Some(end_str) = captures.get(1) {
+                if let Ok(end) = end_str.as_str().parse::<f64>() {
+                    if let Some(start) = current_start {
+                        let duration = end - start;
+                        silence_regions.push(SilenceRegion {
+                            start,
+                            end,
+                            duration,
+                        });
+                        println!("  🔍 Found silence end: {:.2}s (duration: {:.2}s)", end, duration);
+                        current_start = None;
                     }
                 }
             }
-            Err(e) => {
-                println!("  ❌ {:.1}s: FFmpeg failed: {}", start_time, e);
-            }
         }
     }
     
-    println!("📊 Found {} quiet samples out of {} total chunks", quiet_samples.len(), (duration / chunk_size) as usize);
-    
-    // Show first few quiet samples for debugging
-    if !quiet_samples.is_empty() {
-        println!("🔍 First 5 quiet samples:");
-        for (i, (time, volume)) in quiet_samples.iter().take(5).enumerate() {
-            println!("  {}. {:.1}s: {:.1}dB", i + 1, time, volume);
-        }
-        if quiet_samples.len() > 5 {
-            println!("  ... and {} more", quiet_samples.len() - 5);
-        }
-    }
-    
-    // Group consecutive quiet samples into regions
-    let silence_regions = group_quiet_samples(quiet_samples, min_duration);
-    println!("🎯 Found {} quiet regions (min duration: {:.1}s)", silence_regions.len(), min_duration);
-    
-    for (i, region) in silence_regions.iter().enumerate() {
-        println!("  Region {}: {:.2}s - {:.2}s (duration: {:.2}s)", 
-            i + 1, region.start, region.end, region.duration);
-    }
-    
-    Ok(silence_regions)
+    silence_regions
 }
 
 fn parse_volume_from_output(output: &str) -> Option<f64> {

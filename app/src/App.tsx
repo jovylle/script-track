@@ -1313,7 +1313,7 @@ function App() {
                     {transcript.map((segment) => (
                       <span
                         key={segment.id}
-                        className={`inline-word ${!segment.keep ? 'removed' : ''} ${segment.isSilence ? 'silence-segment' : ''} ${segment.id === currentSegmentId ? 'active' : ''} ${segment.id === selectedWordId ? 'selected' : ''}`}
+                        className={`inline-word ${!segment.keep ? 'removed' : ''} ${segment.isSilence ? 'silence-segment' : ''} ${segment.isSplit ? 'split-segment' : ''} ${segment.id === currentSegmentId ? 'active' : ''} ${segment.id === selectedWordId ? 'selected' : ''}`}
                         onClick={() => {
                           console.log('🎯 SEGMENT CLICKED:', {
                             id: segment.id,

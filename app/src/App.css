@@ -706,6 +706,13 @@ body {
   opacity: 0.6;
 }
 
+.inline-word.split-segment {
+  background: rgba(255, 193, 7, 0.1);
+  border-color: #ffc107;
+  color: #ffc107;
+  font-style: italic;
+}
+
 .silence-content {
   font-family: 'Monaco', 'Menlo', monospace;
   font-size: 0.9rem;

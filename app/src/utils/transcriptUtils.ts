@@ -67,7 +67,8 @@ function splitSegmentBySilence(
       ...segment,
       id: `${segment.id}-before`,
       end: silence.start,
-      text: segment.text // Keep original text (we can't split text accurately)
+      text: segment.text,
+      isSplit: true // Mark as split segment
     });
   }
   
@@ -77,7 +78,8 @@ function splitSegmentBySilence(
       ...segment,
       id: `${segment.id}-after`,
       start: silence.end,
-      text: segment.text // Keep original text
+      text: segment.text,
+      isSplit: true // Mark as split segment
     });
   }
   

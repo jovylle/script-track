@@ -19,6 +19,8 @@ export interface TranscriptSegment {
   keep: boolean;
   /** Whether this segment represents silence (vs speech) */
   isSilence?: boolean;
+  /** Whether this segment was split due to silence detection */
+  isSplit?: boolean;
 }
 
 /**

@@ -23,6 +23,11 @@ interface TranscriptionResult {
   duration: number;
 }
 
+interface AudioLevel {
+  timestamp: number;
+  volume_db: number;
+}
+
 // Helper function to log to terminal instead of browser console
 const logToTerminal = async (message: string) => {
   try {
@@ -60,6 +65,7 @@ function App() {
   const [excludedSilenceRegions, setExcludedSilenceRegions] = useState<Set<string>>(new Set());
   const [isUploading, setIsUploading] = useState(false);
   const [exportedFilePath, setExportedFilePath] = useState<string | null>(null);
+  const [audioVisualizationData, setAudioVisualizationData] = useState<AudioLevel[]>([]);
   const [silenceSettingsExpanded, setSilenceSettingsExpanded] = useState(false);
   
   // Undo/Redo for silence detection
@@ -382,6 +388,20 @@ function App() {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [videoElement, videoDuration, transcript]);
 
+  const loadAudioVisualization = async (filePath: string) => {
+    try {
+      await logToTerminal('📊 Loading audio visualization data...');
+      const data = await invoke<AudioLevel[]>('get_audio_visualization_data', {
+        filePath: filePath,
+        sampleRate: 0.1 // Sample every 0.1 seconds for smooth visualization
+      });
+      setAudioVisualizationData(data);
+      await logToTerminal(`✅ Loaded ${data.length} audio level samples for visualization`);
+    } catch (error) {
+      await logToTerminal(`❌ Failed to load audio visualization: ${error}`);
+    }
+  };
+
   const handleFileSelect = async () => {
     console.log('📁 FILE SELECT: Opening file picker...');
     // Use HTML file input directly
@@ -416,6 +436,9 @@ function App() {
           console.log('📁 File saved to:', savedPath);
           console.log('📁 Setting videoPath to:', savedPath);
           setVideoPath(savedPath); // Store actual file path, not blob URL!
+          
+          // Load audio visualization data
+          await loadAudioVisualization(savedPath);
         } catch (error) {
           console.error('❌ Error saving file:', error);
           setVideoPath(blobUrl); // Fallback to blob URL if save fails
@@ -872,6 +895,53 @@ function App() {
                           {isPlaying ? <Pause size={20} /> : <Play size={20} />}
                         </button>
                       </div>
+                      
+                      {/* Audio Level Visualization */}
+                      {audioVisualizationData.length > 0 && (
+                        <div className="audio-visualization">
+                          <div className="audio-visualization-header">
+                            <span>📊 Audio Levels</span>
+                            <span className="audio-visualization-info">
+                              {audioVisualizationData.length} samples
+                            </span>
+                          </div>
+                          <div className="audio-waveform">
+                            {audioVisualizationData.map((level, index) => {
+                              // Convert dB to height (0-100%)
+                              // -60dB = 0%, -10dB = 100%
+                              const height = Math.max(0, Math.min(100, ((level.volume_db + 60) / 50) * 100));
+                              const isCurrentTime = Math.abs(level.timestamp - currentTime) < 0.1;
+                              const isSilence = level.volume_db < noiseThreshold;
+                              
+                              return (
+                                <div
+                                  key={index}
+                                  className={`audio-bar ${isCurrentTime ? 'current' : ''} ${isSilence ? 'silence' : ''}`}
+                                  style={{
+                                    height: `${height}%`,
+                                    width: `${100 / audioVisualizationData.length}%`
+                                  }}
+                                  title={`${level.timestamp.toFixed(1)}s: ${level.volume_db.toFixed(1)}dB`}
+                                />
+                              );
+                            })}
+                          </div>
+                          <div className="audio-visualization-legend">
+                            <div className="legend-item">
+                              <div className="legend-color speech"></div>
+                              <span>Speech</span>
+                            </div>
+                            <div className="legend-item">
+                              <div className="legend-color silence"></div>
+                              <span>Silence (below {noiseThreshold}dB)</span>
+                            </div>
+                            <div className="legend-item">
+                              <div className="legend-color current"></div>
+                              <span>Current Time</span>
+                            </div>
+                          </div>
+                        </div>
+                      )}
             </div>
 
             <div className="transcript-panel">

@@ -67,3 +67,13 @@ export interface SilenceSettings {
   minSilenceDuration: number;
 }
 
+/**
+ * Audio level data point for visualization
+ */
+export interface AudioLevel {
+  /** Timestamp in seconds */
+  timestamp: number;
+  /** Volume level in dB */
+  volume_db: number;
+}
+

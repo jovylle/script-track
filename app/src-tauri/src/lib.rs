@@ -907,6 +907,73 @@ async fn analyze_audio_levels(
 }
 
 #[tauri::command]
+async fn get_audio_visualization_data(
+    file_path: String,
+    sample_rate: f64,
+) -> Result<Vec<AudioLevel>, String> {
+    use std::process::Command;
+    
+    println!("📊 Getting audio visualization data for: {}", file_path);
+    println!("   Sample rate: every {} seconds", sample_rate);
+    
+    // Get video duration first
+    let duration_output = Command::new("ffprobe")
+        .args([
+            "-v", "quiet",
+            "-show_entries", "format=duration",
+            "-of", "csv=p=0",
+            &file_path
+        ])
+        .output();
+    
+    let duration = match duration_output {
+        Ok(output) => {
+            let duration_str = String::from_utf8_lossy(&output.stdout);
+            duration_str.trim().parse::<f64>().unwrap_or(0.0)
+        }
+        Err(_) => 0.0
+    };
+    
+    println!("📊 Video duration: {}s", duration);
+    
+    let mut levels = Vec::new();
+    let mut current_time = 0.0;
+    
+    while current_time < duration {
+        let output = Command::new("ffmpeg")
+            .args([
+                "-i", &file_path,
+                "-ss", &current_time.to_string(),
+                "-t", &sample_rate.to_string(),
+                "-af", "volumedetect",
+                "-f", "null",
+                "-"
+            ])
+            .output();
+        
+        match output {
+            Ok(output) => {
+                let output_str = String::from_utf8_lossy(&output.stderr);
+                if let Some(volume) = parse_volume_from_output(&output_str) {
+                    levels.push(AudioLevel {
+                        timestamp: current_time,
+                        volume_db: volume,
+                    });
+                }
+            }
+            Err(e) => {
+                println!("❌ Error analyzing chunk at {}s: {}", current_time, e);
+            }
+        }
+        
+        current_time += sample_rate;
+    }
+    
+    println!("📈 Found {} audio level samples for visualization", levels.len());
+    Ok(levels)
+}
+
+#[tauri::command]
 async fn play_test_tone(volume_db: f64, duration: f64) -> Result<(), String> {
     use std::process::Command;
     
@@ -989,7 +1056,8 @@ pub fn run() {
                     analyze_audio_levels,
                     analyze_audio_for_presets,
                     play_audio_segment,
-                    play_test_tone
+                    play_test_tone,
+                    get_audio_visualization_data
                 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

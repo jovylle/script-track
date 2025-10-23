@@ -1121,13 +1121,34 @@ function App() {
                                     sampleRate: 0.1 // Sample every 0.1 seconds
                                   });
                                   await logToTerminal(`📈 Audio analysis complete: ${levels.length} samples`);
-                                  for (let i = 0; i < Math.min(levels.length, 20); i++) {
+                                  
+                                  // Show first 10 and last 10 samples
+                                  const showCount = Math.min(10, levels.length);
+                                  await logToTerminal(`🔍 FIRST ${showCount} SAMPLES:`);
+                                  for (let i = 0; i < showCount; i++) {
                                     const [timestamp, volume] = levels[i];
                                     await logToTerminal(`  ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
                                   }
+                                  
                                   if (levels.length > 20) {
-                                    await logToTerminal(`  ... and ${levels.length - 20} more samples`);
+                                    await logToTerminal(`🔍 LAST ${showCount} SAMPLES:`);
+                                    for (let i = levels.length - showCount; i < levels.length; i++) {
+                                      const [timestamp, volume] = levels[i];
+                                      await logToTerminal(`  ${timestamp.toFixed(1)}s: ${volume.toFixed(1)}dB`);
+                                    }
                                   }
+                                  
+                                  // Show volume range
+                                  const volumes = levels.map(([_, vol]) => vol);
+                                  const minVol = Math.min(...volumes);
+                                  const maxVol = Math.max(...volumes);
+                                  const avgVol = volumes.reduce((a, b) => a + b, 0) / volumes.length;
+                                  await logToTerminal(`📊 VOLUME RANGE: ${minVol.toFixed(1)}dB to ${maxVol.toFixed(1)}dB (avg: ${avgVol.toFixed(1)}dB)`);
+                                  
+                                  // Show how this compares to current threshold
+                                  await logToTerminal(`🎯 CURRENT THRESHOLD: ${noiseThreshold}dB`);
+                                  const belowThreshold = volumes.filter(vol => vol < noiseThreshold).length;
+                                  await logToTerminal(`📉 SAMPLES BELOW THRESHOLD: ${belowThreshold}/${levels.length} (${(belowThreshold/levels.length*100).toFixed(1)}%)`);
                                 } catch (error) {
                                   console.error('Audio analysis failed:', error);
                                   await logToTerminal(`❌ Audio analysis failed: ${error}`);

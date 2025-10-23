@@ -18,9 +18,11 @@ export interface TranscriptSegment {
   /** Whether this segment should be kept in the export */
   keep: boolean;
   /** Whether this segment represents silence (vs speech) */
-  isSilence?: boolean;
+  is_silence?: boolean;
   /** Whether this segment was split due to silence detection */
   isSplit?: boolean;
+  /** Type of segment: word, gap, or silence */
+  segment_type?: "word" | "gap" | "silence";
 }
 
 /**

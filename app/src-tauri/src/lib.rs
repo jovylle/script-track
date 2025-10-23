@@ -44,6 +44,15 @@ pub struct AudioLevel {
     pub volume_db: f64,
 }
 
+#[derive(Serialize, Deserialize)]
+pub struct AudioQualityReport {
+    pub speech_avg_db: f64,
+    pub gap_avg_db: f64,
+    pub contrast_db: f64,        // speech_avg - gap_avg
+    pub quality_rating: String,  // "Excellent", "Good", "Fair", "Poor"
+    pub recommendation: String,
+}
+
 impl AppState {
     pub fn new() -> Self {
         Self { 
@@ -159,7 +168,7 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
         return Err("Cannot transcribe blob URLs with external tools".to_string());
     }
     
-    println!("Using real Whisper CLI for transcription...");
+    println!("🎤 Transcribing your audio...");
     
     // Create temporary output file - just use the filename without path and extension
     let filename = std::path::Path::new(file_path)
@@ -171,7 +180,7 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
     println!("Looking for JSON file: {}", temp_output);
     
     // Run whisper with JSON output
-    println!("Running Whisper command on file: {}", file_path);
+    println!("📝 Processing audio file...");
     let output = Command::new("whisper")
         .arg(file_path)
         .arg("--model")
@@ -186,9 +195,9 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
     
     match output {
         Ok(result) => {
-            println!("Whisper command completed with status: {}", result.status);
+            println!("✅ Transcription completed");
             if result.status.success() {
-                println!("Whisper command succeeded, looking for JSON file: {}", temp_output);
+                println!("📄 Reading transcription results...");
                 // Try to parse the JSON output
                 if let Ok(json_content) = std::fs::read_to_string(&temp_output) {
                     println!("Successfully read JSON file, parsing...");
@@ -250,7 +259,7 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
                         // Clean up temporary file (keeping it causes rebuild loops)
                         let _ = std::fs::remove_file(&temp_output);
                         
-                        println!("Successfully parsed {} word-level segments from Whisper", segments.len());
+                        println!("✅ Found {} words in your audio", segments.len());
                         println!("JSON file location: {}", temp_output);
                         println!("First few segments:");
                         for (i, segment) in segments.iter().take(3).enumerate() {
@@ -271,13 +280,13 @@ async fn try_real_whisper_transcription(file_path: &str) -> Result<Transcription
             } else {
                 let stdout_msg = String::from_utf8_lossy(&result.stdout);
                 let stderr_msg = String::from_utf8_lossy(&result.stderr);
-                println!("Whisper command failed!");
+                println!("❌ Transcription failed!");
                 println!("STDOUT: {}", stdout_msg);
                 println!("STDERR: {}", stderr_msg);
-                Err(format!("Whisper command failed: {}", stderr_msg))
+                Err(format!("Transcription failed: {}", stderr_msg))
             }
         }
-        Err(e) => Err(format!("Failed to run Whisper: {}", e))
+        Err(e) => Err(format!("Failed to start transcription: {}", e))
     }
 }
 
@@ -309,6 +318,173 @@ fn get_video_duration_internal(file_path: &str) -> Option<f64> {
     } else {
         Some(15.0) // Fallback duration
     }
+}
+
+fn get_volume_at_time(file_path: &str, time: f64, duration: f64) -> Result<f64, String> {
+    use std::process::Command;
+    
+    let output = Command::new("ffmpeg")
+        .args([
+            "-ss", &time.to_string(),
+            "-i", file_path,
+            "-t", &duration.to_string(),
+            "-af", "volumedetect",
+            "-f", "null",
+            "-"
+        ])
+        .output();
+    
+    match output {
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            for line in stderr.lines() {
+                if line.contains("mean_volume:") {
+                    if let Some(start_pos) = line.find("mean_volume: ") {
+                        let volume_str = &line[start_pos + 13..];
+                        if let Some(end_pos) = volume_str.find(' ') {
+                            if let Ok(vol) = volume_str[..end_pos].parse::<f64>() {
+                                return Ok(vol);
+                            }
+                        }
+                    }
+                }
+            }
+            Ok(-40.0) // Default if parsing fails
+        }
+        Err(_) => Ok(-40.0) // Default if command fails
+    }
+}
+
+#[tauri::command]
+async fn analyze_audio_quality(
+    file_path: String,
+    transcript_segments: Vec<TranscriptSegment>,
+) -> Result<AudioQualityReport, String> {
+    use std::process::Command;
+    
+    println!("📊 Analyzing audio quality...");
+    
+    if file_path.starts_with("blob:") {
+        return Err("Cannot analyze blob URLs with external tools".to_string());
+    }
+    
+    if transcript_segments.is_empty() {
+        return Err("No transcript segments provided for analysis".to_string());
+    }
+    
+    let mut speech_volumes = Vec::new();
+    let mut gap_volumes = Vec::new();
+    
+    // Sample audio levels at middle of each speech segment
+    for segment in &transcript_segments {
+        if segment.is_silence != Some(true) { // Check if it's not a silence segment
+            let middle_time = (segment.start + segment.end) / 2.0;
+            
+            let output = Command::new("ffmpeg")
+                .args([
+                    "-ss", &middle_time.to_string(),
+                    "-i", &file_path,
+                    "-t", "0.1",
+                    "-af", "volumedetect",
+                    "-f", "null",
+                    "-"
+                ])
+                .output();
+            
+            if let Ok(output) = output {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                for line in stderr.lines() {
+                    if line.contains("mean_volume:") {
+                        if let Some(start_pos) = line.find("mean_volume: ") {
+                            let volume_str = &line[start_pos + 13..];
+                            if let Some(end_pos) = volume_str.find(' ') {
+                                if let Ok(vol) = volume_str[..end_pos].parse::<f64>() {
+                                    speech_volumes.push(vol);
+                                    println!("  🗣️ Speech at {:.1}s: {:.1}dB", middle_time, vol);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Sample audio levels in gaps between segments
+    for i in 0..transcript_segments.len() - 1 {
+        let current_end = transcript_segments[i].end;
+        let next_start = transcript_segments[i + 1].start;
+        
+        if next_start > current_end + 0.2 { // Gap of at least 0.2s
+            let gap_middle = (current_end + next_start) / 2.0;
+            
+            let output = Command::new("ffmpeg")
+                .args([
+                    "-ss", &gap_middle.to_string(),
+                    "-i", &file_path,
+                    "-t", "0.1",
+                    "-af", "volumedetect",
+                    "-f", "null",
+                    "-"
+                ])
+                .output();
+            
+            if let Ok(output) = output {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                for line in stderr.lines() {
+                    if line.contains("mean_volume:") {
+                        if let Some(start_pos) = line.find("mean_volume: ") {
+                            let volume_str = &line[start_pos + 13..];
+                            if let Some(end_pos) = volume_str.find(' ') {
+                                if let Ok(vol) = volume_str[..end_pos].parse::<f64>() {
+                                    gap_volumes.push(vol);
+                                    println!("  🔇 Gap at {:.1}s: {:.1}dB", gap_middle, vol);
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Calculate averages
+    let speech_avg = if !speech_volumes.is_empty() {
+        speech_volumes.iter().sum::<f64>() / speech_volumes.len() as f64
+    } else {
+        -30.0 // Default speech level
+    };
+    
+    let gap_avg = if !gap_volumes.is_empty() {
+        gap_volumes.iter().sum::<f64>() / gap_volumes.len() as f64
+    } else {
+        -50.0 // Default silence level
+    };
+    
+    let contrast = speech_avg - gap_avg;
+    
+    let (quality_rating, recommendation) = match contrast {
+        x if x >= 20.0 => ("Excellent", "Your audio quality is great! Silence detection will work very well."),
+        x if x >= 15.0 => ("Good", "Audio quality is good. Silence detection should work well."),
+        x if x >= 10.0 => ("Fair", "Audio quality is acceptable, but consider:\n• Recording in a quieter room\n• Speaking closer to the mic"),
+        _ => ("Poor", "⚠️ Low audio quality detected. For best results:\n• Use a better microphone\n• Record in a quiet room\n• Speak closer to the mic\n• Reduce background noise\n\nThe tool will use adaptive detection to work with your audio.")
+    };
+    
+    println!("📊 Analysis results:");
+    println!("  🗣️ Average speech volume: {:.1}dB ({} samples)", speech_avg, speech_volumes.len());
+    println!("  🔇 Average gap volume: {:.1}dB ({} samples)", gap_avg, gap_volumes.len());
+    println!("  📈 Contrast: {:.1}dB", contrast);
+    println!("  🎯 Quality rating: {}", quality_rating);
+    
+    Ok(AudioQualityReport {
+        speech_avg_db: speech_avg,
+        gap_avg_db: gap_avg,
+        contrast_db: contrast,
+        quality_rating: quality_rating.to_string(),
+        recommendation: recommendation.to_string(),
+    })
 }
 
 #[tauri::command]
@@ -356,7 +532,7 @@ async fn export_video(
     
     let full_filter = format!("{};{}", filter_parts.join(";"), concat_filter);
     
-    println!("Using FFmpeg filter: {}", full_filter);
+    println!("🎬 Processing video segments...");
     
     let output = Command::new("ffmpeg")
         .arg("-i")
@@ -379,22 +555,22 @@ async fn export_video(
     
     match output {
         Ok(result) => {
-            println!("FFmpeg command completed with status: {}", result.status);
+            println!("✅ Video processing completed");
             if result.status.success() {
                 println!("✅ Video exported successfully to {}", output_path);
                 Ok(format!("Video exported successfully to {}", output_path))
             } else {
                 let stdout_msg = String::from_utf8_lossy(&result.stdout);
                 let stderr_msg = String::from_utf8_lossy(&result.stderr);
-                println!("❌ FFmpeg failed!");
+                println!("❌ Video processing failed!");
                 println!("STDOUT: {}", stdout_msg);
                 println!("STDERR: {}", stderr_msg);
-                Err(format!("FFmpeg error: {}", stderr_msg))
+                Err(format!("Video processing error: {}", stderr_msg))
             }
         }
         Err(e) => {
-            println!("❌ Failed to run FFmpeg: {}", e);
-            Err(format!("Failed to run FFmpeg: {}", e))
+            println!("❌ Failed to process video: {}", e);
+            Err(format!("Failed to process video: {}", e))
         }
     }
 }
@@ -441,7 +617,7 @@ async fn detect_audio_silence(
     match output {
         Ok(result) => {
             let stderr = String::from_utf8_lossy(&result.stderr);
-            println!("🔍 FFmpeg output:\n{}", stderr);
+            println!("🔍 Analyzing audio levels...");
             
             // Parse silence regions from silencedetect output
             let silence_regions = parse_silence_output(&stderr);
@@ -455,8 +631,8 @@ async fn detect_audio_silence(
             Ok(silence_regions)
         }
         Err(e) => {
-            println!("❌ Failed to run FFmpeg: {}", e);
-            Err(format!("Failed to run FFmpeg: {}", e))
+            println!("❌ Failed to process video: {}", e);
+            Err(format!("Failed to process video: {}", e))
         }
     }
 }
@@ -501,6 +677,73 @@ fn parse_silence_output(output: &str) -> Vec<SilenceRegion> {
     }
     
     silence_regions
+}
+
+#[tauri::command]
+async fn detect_silence_adaptive(
+    file_path: String,
+    min_duration: f64,
+    percentile: f64, // 0.25 = cut quietest 25%
+) -> Result<Vec<SilenceRegion>, String> {
+    use std::process::Command;
+    
+    println!("🎯 Adaptive silence detection: cutting quietest {}% of audio", percentile * 100.0);
+    
+    if file_path.starts_with("blob:") {
+        return Err("Cannot detect silence in blob URLs with external tools".to_string());
+    }
+    
+    // Step 1: Sample audio levels across entire video
+    let duration = get_video_duration_internal(&file_path).unwrap_or(10.0);
+    let mut all_levels = Vec::new();
+    
+    let mut time = 0.0;
+    while time < duration {
+        let volume = get_volume_at_time(&file_path, time, 0.1)?;
+        all_levels.push((time, volume));
+        time += 0.1;
+    }
+    
+    // Step 2: Sort by volume and find percentile threshold
+    let mut volumes: Vec<f64> = all_levels.iter().map(|(_, v)| *v).collect();
+    volumes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    
+    let percentile_index = (volumes.len() as f64 * percentile) as usize;
+    let adaptive_threshold = volumes[percentile_index];
+    
+    println!("📊 Analyzed {} samples", volumes.len());
+    println!("🎯 Adaptive threshold ({}th percentile): {:.1}dB", 
+             (percentile * 100.0) as i32, adaptive_threshold);
+    
+    // Step 3: Use this threshold with silencedetect
+    let output = Command::new("ffmpeg")
+        .args([
+            "-i", &file_path,
+            "-af", &format!("silencedetect=noise={}dB:duration={}", adaptive_threshold, min_duration),
+            "-f", "null", "-"
+        ])
+        .output();
+    
+    match output {
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            println!("🔍 Analyzing audio levels...");
+            
+            let silence_regions = parse_silence_output(&stderr);
+            println!("✅ Found {} silence regions using adaptive threshold", silence_regions.len());
+            
+            for (i, region) in silence_regions.iter().enumerate() {
+                println!("  Region {}: {:.2}s - {:.2}s (duration: {:.2}s)", 
+                    i + 1, region.start, region.end, region.duration);
+            }
+            
+            Ok(silence_regions)
+        }
+        Err(e) => {
+            println!("❌ Failed to process video: {}", e);
+            Err(format!("Failed to process video: {}", e))
+        }
+    }
 }
 
 
@@ -857,8 +1100,10 @@ async fn auto_detect_silence_threshold(
         -50.0 // Default silence level
     };
     
-    // Calculate optimal threshold: use gap average + small buffer
+    // ✅ WORKING METHOD: Calculate optimal threshold: use gap average + small buffer
     // This ensures we detect silence (below threshold) but not speech (above threshold)
+    // Previous broken method: (speech_avg + gap_avg) / 2.0 - 5.0  // This was too low!
+    // Working method: gap_avg + 10.0  // This puts threshold above silence but below speech
     let optimal_threshold = gap_avg + 10.0; // 10dB above gap level
     
     println!("📊 Analysis results:");
@@ -867,6 +1112,119 @@ async fn auto_detect_silence_threshold(
     println!("  🎯 Optimal threshold: {:.1}dB", optimal_threshold);
     
     Ok(optimal_threshold)
+}
+
+
+#[tauri::command]
+async fn enhance_audio_for_analysis(
+    input_path: String,
+    output_path: String,
+    speech_boost_db: f64,
+    transcript_segments: Vec<TranscriptSegment>,
+) -> Result<String, String> {
+    use std::process::Command;
+    
+    println!("🎵 Enhancing audio for better silence detection...");
+    println!("📁 Input: {}", input_path);
+    println!("📁 Output: {}", output_path);
+    println!("🔊 Speech boost: {}dB", speech_boost_db);
+    
+    // For blob URLs, we can't use external tools directly
+    if input_path.starts_with("blob:") {
+        return Err("Cannot enhance blob URLs with external tools".to_string());
+    }
+    
+    // Filter out silence segments and build selective enhancement
+    let speech_segments: Vec<_> = transcript_segments
+        .iter()
+        .filter(|s| s.is_silence != Some(true))
+        .collect();
+
+    println!("🎵 Building selective enhancement for {} speech segments", speech_segments.len());
+
+             if speech_segments.is_empty() {
+                 println!("⚠️ No speech segments found, applying general audio enhancement");
+                 let output = Command::new("ffmpeg")
+                     .args([
+                         "-i", &input_path,
+                         "-af", &format!(
+                             "loudnorm=I=-16:TP=-1.5:LRA=11,acompressor=threshold=0.089:ratio=9:attack=200:release=1000,highpass=f=80,volume={}dB",
+                             speech_boost_db
+                         ),
+                         "-c:v", "copy",
+                         "-y",
+                         &output_path
+                     ])
+                     .output();
+
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    println!("✅ Uniform audio enhancement completed successfully");
+                    Ok(output_path)
+                } else {
+                    let error_msg = String::from_utf8_lossy(&output.stderr);
+                    println!("❌ Audio enhancement failed: {}", error_msg);
+                    Err(format!("Audio enhancement failed: {}", error_msg))
+                }
+            }
+            Err(e) => {
+                println!("❌ Error running FFmpeg for audio enhancement: {}", e);
+                Err(format!("Error running FFmpeg: {}", e))
+            }
+        }
+             } else {
+                 // Build selective enhancement filter with general audio improvement
+                 let mut filter_parts = vec![];
+                 
+                 // First, apply general audio enhancement to the entire track
+                 filter_parts.push("loudnorm=I=-16:TP=-1.5:LRA=11".to_string());
+                 filter_parts.push("acompressor=threshold=0.089:ratio=9:attack=200:release=1000".to_string());
+                 filter_parts.push("highpass=f=80".to_string());
+
+                 // Then add selective speech boosting
+                 for segment in &speech_segments {
+                     let enable_expr = format!("between(t,{},{})", segment.start, segment.end);
+                     filter_parts.push(format!(
+                         "volume=enable='{}':volume={}dB",
+                         enable_expr,
+                         speech_boost_db
+                     ));
+                     println!("  📈 Boosting {:.1}s-{:.1}s by {}dB",
+                              segment.start, segment.end, speech_boost_db);
+                 }
+
+                 // Combine all filters with commas
+                 let audio_filter = filter_parts.join(",");
+                 println!("🎛️ FFmpeg filter: {}", audio_filter);
+
+        let output = Command::new("ffmpeg")
+            .args([
+                "-i", &input_path,
+                "-af", &audio_filter,
+                "-c:v", "copy",
+                "-y",
+                &output_path
+            ])
+            .output();
+
+        match output {
+            Ok(output) => {
+                if output.status.success() {
+                    println!("✅ Selective audio enhancement completed successfully");
+                    Ok(output_path)
+                } else {
+                    let error_msg = String::from_utf8_lossy(&output.stderr);
+                    println!("❌ Audio enhancement failed: {}", error_msg);
+                    Err(format!("Audio enhancement failed: {}", error_msg))
+                }
+            }
+            Err(e) => {
+                println!("❌ Error running FFmpeg for audio enhancement: {}", e);
+                Err(format!("Error running FFmpeg: {}", e))
+            }
+        }
+    }
 }
 
 #[tauri::command]
@@ -900,7 +1258,12 @@ async fn get_audio_visualization_data(
     println!("📊 Video duration: {}s", duration);
     
     let mut levels = Vec::new();
-    // Use volumedetect with time-based analysis to get real audio levels
+    // ✅ WORKING METHOD: Use volumedetect with time-based analysis to get real audio levels
+    // This approach works because it samples small chunks (0.1s) and gets actual mean_volume values
+    // Alternative approaches that DON'T work:
+    // - astats: gives overall statistics, not time-based data
+    // - silencedetect for visualization: too binary (just silence/speech), no actual levels
+    // - volumedetect on entire file: gives overall stats, not per-timepoint data
     let mut current_time = 0.0;
     
     while current_time < duration {
@@ -1035,14 +1398,17 @@ pub fn run() {
                     export_video,
                     get_video_duration,
                     detect_audio_silence,
+                    detect_silence_adaptive,
                     auto_detect_silence_threshold,
+                    analyze_audio_quality,
                     log_to_terminal,
                     open_file_location,
                     analyze_audio_levels,
                     analyze_audio_for_presets,
                     play_audio_segment,
                     play_test_tone,
-                    get_audio_visualization_data
+                    get_audio_visualization_data,
+                    enhance_audio_for_analysis
                 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

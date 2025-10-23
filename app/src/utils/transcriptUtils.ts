@@ -41,7 +41,8 @@ export function splitSegmentsAtSilence(
     end: region.end + silencePadding, // Add buffer after
     text: `[Silence: ${region.duration.toFixed(1)}s]`,
     keep: true,
-    isSilence: true
+    is_silence: true,
+    segment_type: "silence" as const
   }));
   
   result.push(...silenceSegments);

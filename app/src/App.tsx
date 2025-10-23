@@ -9,8 +9,9 @@ interface TranscriptSegment {
   end: number;
   text: string;
   keep: boolean;
-  isSilence?: boolean;
+  is_silence?: boolean;
   isSplit?: boolean;
+  segment_type?: "word" | "gap" | "silence";
 }
 
 interface SilenceRegion {
@@ -27,6 +28,14 @@ interface TranscriptionResult {
 interface AudioLevel {
   timestamp: number;
   volume_db: number;
+}
+
+interface AudioQualityReport {
+  speech_avg_db: number;
+  gap_avg_db: number;
+  contrast_db: number;
+  quality_rating: string;
+  recommendation: string;
 }
 
 // Helper function to log to terminal instead of browser console
@@ -64,6 +73,12 @@ function App() {
   const [isUploading, setIsUploading] = useState(false);
   const [exportedFilePath, setExportedFilePath] = useState<string | null>(null);
   const [audioVisualizationData, setAudioVisualizationData] = useState<AudioLevel[]>([]);
+  const [autoDetectedThreshold, setAutoDetectedThreshold] = useState<number | null>(null);
+  const [audioQuality, setAudioQuality] = useState<AudioQualityReport | null>(null);
+  const [quietnessPercentile, setQuietnessPercentile] = useState(0.25);
+  const [shouldEnhanceAudio, setShouldEnhanceAudio] = useState<boolean>(false);
+  const [enhancedVideoPath, setEnhancedVideoPath] = useState<string | null>(null);
+  const [isEnhancingAudio, setIsEnhancingAudio] = useState<boolean>(false);
   
   // Undo/Redo for silence detection
   const [transcriptHistory, setTranscriptHistory] = useState<TranscriptSegment[][]>([]);
@@ -133,7 +148,7 @@ function App() {
 
   const clearSilenceDetection = () => {
     console.log('🧹 CLEARING SILENCE DETECTION');
-    const speechOnly = transcript.filter(s => !s.isSilence);
+    const speechOnly = transcript.filter(s => !s.is_silence);
     setTranscript(speechOnly);
     setHasSilenceDetection(false);
     saveToHistory(speechOnly);
@@ -146,7 +161,7 @@ function App() {
     console.log('✂️ EXCLUDING ALL SILENCE REGIONS');
     const newExcluded = new Set<string>();
     transcript.forEach(segment => {
-      if (segment.isSilence) {
+      if (segment.is_silence) {
         newExcluded.add(getSilenceRegionKey(segment.start, segment.end));
       }
     });
@@ -154,7 +169,7 @@ function App() {
     
     // Update transcript to mark excluded silence as removed
     const updatedTranscript = transcript.map(segment => {
-      if (segment.isSilence) {
+      if (segment.is_silence) {
         return { ...segment, keep: false };
       }
       return segment;
@@ -169,7 +184,7 @@ function App() {
     
     // Update transcript to mark all silence as kept
     const updatedTranscript = transcript.map(segment => {
-      if (segment.isSilence) {
+      if (segment.is_silence) {
         return { ...segment, keep: true };
       }
       return segment;
@@ -194,7 +209,7 @@ function App() {
     
     // Update transcript
     const updatedTranscript = transcript.map(segment => {
-      if (segment.isSilence && 
+      if (segment.is_silence && 
           Math.abs(segment.start - start) < 0.1 && 
           Math.abs(segment.end - end) < 0.1) {
         return { ...segment, keep: !newExcluded.has(key) };
@@ -399,6 +414,78 @@ function App() {
     }
   };
 
+  const insertGapSegments = (segments: TranscriptSegment[]): TranscriptSegment[] => {
+    const withGaps: TranscriptSegment[] = [];
+    const MIN_GAP_DURATION = 0.3; // Only create gaps >= 0.3s
+    
+    for (let i = 0; i < segments.length; i++) {
+      // Add the current word segment
+      withGaps.push({ ...segments[i], segment_type: "word" });
+      
+      // Check if there's a gap to the next segment
+      if (i < segments.length - 1) {
+        const currentEnd = segments[i].end;
+        const nextStart = segments[i + 1].start;
+        const gapDuration = nextStart - currentEnd;
+        
+        if (gapDuration >= MIN_GAP_DURATION) {
+          // Create gap segment with duration
+          withGaps.push({
+            id: `gap_${i}`,
+            start: currentEnd,
+            end: nextStart,
+            text: `...(${gapDuration.toFixed(1)}s)`,
+            keep: true,
+            is_silence: true,
+            segment_type: "gap"
+          });
+        }
+      }
+    }
+    
+    return withGaps;
+  };
+
+  const enhanceAudio = async () => {
+    if (!videoPath) {
+      await logToTerminal('❌ No video path available for audio enhancement');
+      return;
+    }
+
+    setIsEnhancingAudio(true);
+    try {
+      await logToTerminal('🎵 Enhancing audio (speech boost + general enhancement)...');
+      await logToTerminal(`📝 Using ${transcript.length} transcript segments for selective enhancement`);
+      
+      // Create enhanced video path
+      const originalPath = videoPath;
+      const pathParts = originalPath.split('.');
+      const extension = pathParts.pop();
+      const basePath = pathParts.join('.');
+      const enhancedPath = `${basePath}_enhanced.${extension}`;
+      
+      const result = await invoke<string>('enhance_audio_for_analysis', {
+        inputPath: originalPath,
+        outputPath: enhancedPath,
+        speechBoostDb: 8.0, // Fixed 8dB speech boost for production
+        transcriptSegments: transcript.filter(s => s.segment_type === "word") // Only enhance word segments
+      });
+      
+      setEnhancedVideoPath(result);
+      await logToTerminal(`✅ Audio enhancement completed: ${result}`);
+      await logToTerminal(`📁 Enhanced video saved to: ${result}`);
+      
+      // Load visualization for the enhanced audio
+      await logToTerminal('📊 Loading visualization for enhanced audio...');
+      await loadAudioVisualization(result);
+      
+    } catch (error) {
+      await logToTerminal(`❌ Audio enhancement failed: ${error}`);
+    } finally {
+      setIsEnhancingAudio(false);
+    }
+  };
+
   const handleFileSelect = async () => {
     console.log('📁 FILE SELECT: Opening file picker...');
     // Use HTML file input directly
@@ -501,12 +588,18 @@ function App() {
               console.log('Transcription result:', result);
               console.log('Number of segments received:', result.segments.length);
               console.log('First few segments:', result.segments.slice(0, 3));
-              setTranscript(result.segments);
+              
+              // Insert gap segments between words
+              const segmentsWithGaps = insertGapSegments(result.segments);
+              setTranscript(segmentsWithGaps);
               setVideoDuration(result.duration);
               setTranscriptionProgress(100);
               
-              // Initialize history with the original transcript
-              saveToHistory(result.segments);
+              // Initialize history with the original transcript (with gaps)
+              saveToHistory(segmentsWithGaps);
+              
+              // Analyze audio quality after transcription
+              await analyzeAndWarnQuality(filePath, result.segments);
     } catch (error) {
       console.error('Error transcribing audio:', error);
       // Fallback to mock data
@@ -527,6 +620,30 @@ function App() {
       clearInterval(progressInterval);
       setIsTranscribing(false);
       setTimeout(() => setTranscriptionProgress(0), 1000);
+    }
+  };
+
+  const analyzeAndWarnQuality = async (filePath: string, transcriptSegments: TranscriptSegment[]) => {
+    try {
+      await logToTerminal('📊 Analyzing audio quality...');
+      
+      const report = await invoke<AudioQualityReport>('analyze_audio_quality', {
+        filePath: filePath,
+        transcriptSegments: transcriptSegments
+      });
+      
+      setAudioQuality(report);
+      
+      await logToTerminal(`📊 Audio Quality: ${report.quality_rating}`);
+      await logToTerminal(`   Speech: ${report.speech_avg_db.toFixed(1)}dB`);
+      await logToTerminal(`   Silence: ${report.gap_avg_db.toFixed(1)}dB`);
+      await logToTerminal(`   Contrast: ${report.contrast_db.toFixed(1)}dB`);
+      
+      if (report.contrast_db < 15) {
+        await logToTerminal(`⚠️ ${report.recommendation}`);
+      }
+    } catch (error) {
+      await logToTerminal(`❌ Audio quality analysis failed: ${error}`);
     }
   };
 
@@ -633,7 +750,7 @@ function App() {
   };
 
   const detectSilentParts = async () => {
-    await logToTerminal(`🔇 DETECTING SILENT PARTS (Auto Smart Detection): minDuration=${minSilenceDuration}s, segments=${transcript.length}`);
+    await logToTerminal(`🔇 DETECTING SILENT PARTS: minDuration=${minSilenceDuration}s, percentile=${(quietnessPercentile * 100).toFixed(0)}%`);
     
     if (!videoPath) {
       await logToTerminal('❌ No video path available for silence detection');
@@ -645,56 +762,54 @@ function App() {
     await logToTerminal(`🎯 Video duration: ${videoDuration}s, Transcript segments: ${transcript.length}`);
     
     try {
-      // First, auto-detect the optimal noise threshold
-      await logToTerminal('🧠 Auto-detecting optimal silence threshold...');
-      const autoThreshold = await invoke<number>('auto_detect_silence_threshold', {
+      // Use percentile-based adaptive detection (cut quietest X% of audio)
+      await logToTerminal('🎯 Using adaptive silence detection...');
+      await logToTerminal(`📊 Parameters: percentile=${(quietnessPercentile * 100).toFixed(0)}%, min_duration=${minSilenceDuration}s`);
+      
+      const silenceRegions: SilenceRegion[] = await invoke('detect_silence_adaptive', {
         filePath: videoPath,
-        transcriptSegments: transcript.filter(s => !s.isSilence) // Only pass speech segments
+        minDuration: minSilenceDuration,
+        percentile: quietnessPercentile
       });
       
-      await logToTerminal(`🎯 Auto-detected optimal threshold: ${autoThreshold.toFixed(1)}dB`);
-      
-      // Call the Rust backend to detect actual silence in the audio
-      await logToTerminal('🎵 Calling FFmpeg silence detection...');
-      await logToTerminal(`📊 Parameters: auto_threshold=${autoThreshold.toFixed(1)}dB, min_duration=${minSilenceDuration}s`);
-      
-      const silenceRegions: SilenceRegion[] = await invoke('detect_audio_silence', {
-        filePath: videoPath,
-        noiseThreshold: autoThreshold,
-        minDuration: minSilenceDuration
-      });
-      
-      await logToTerminal(`📈 FFmpeg returned ${silenceRegions.length} silence regions`);
+      await logToTerminal(`📈 Found ${silenceRegions.length} silence regions`);
       if (silenceRegions.length > 0) {
         await logToTerminal(`📋 First few regions: ${silenceRegions.slice(0, 3).map(r => `${r.start.toFixed(2)}s-${r.end.toFixed(2)}s`).join(', ')}`);
       }
       await logToTerminal(`🎯 Found ${silenceRegions.length} silence regions from audio analysis`);
       
-      // Remove existing silence segments first
-      const speechSegments = transcript.filter(s => !s.isSilence);
-      await logToTerminal(`📋 SPEECH SEGMENTS: ${speechSegments.length}`);
+      // Separate segments by type - only process word segments, preserve gaps
+      const wordSegments = transcript.filter(s => s.segment_type === "word");
+      const gapSegments = transcript.filter(s => s.segment_type === "gap");
+      await logToTerminal(`📋 WORD SEGMENTS: ${wordSegments.length}, GAP SEGMENTS: ${gapSegments.length}`);
       
       // Log detected silence regions
       for (const region of silenceRegions) {
         await logToTerminal(`  🔇 Silence: ${region.start.toFixed(2)}s - ${region.end.toFixed(2)}s (${region.duration.toFixed(2)}s)`);
       }
       
-      // Use smart splitting algorithm to avoid overlaps
+      // Use smart splitting algorithm to avoid overlaps (only on word segments)
       const { splitSegmentsAtSilence } = await import('./utils/transcriptUtils');
-      const allSegments = splitSegmentsAtSilence(speechSegments, silenceRegions, 0.3, 0.1);
+      const processedWordSegments = splitSegmentsAtSilence(wordSegments, silenceRegions, 0.3, 0.1);
       
-      await logToTerminal(`📊 SPLITTING RESULTS: ${speechSegments.length} speech → ${allSegments.length} total segments`);
+      // Merge processed word segments with preserved gap segments
+      const allSegments = [...processedWordSegments, ...gapSegments].sort((a, b) => a.start - b.start);
+      
+      await logToTerminal(`📊 SPLITTING RESULTS: ${wordSegments.length} words → ${processedWordSegments.length} processed, ${gapSegments.length} gaps preserved`);
       
       // Show detailed breakdown
-      const wordSegments = allSegments.filter(s => !s.isSilence);
-      const silenceSegments = allSegments.filter(s => s.isSilence);
-      await logToTerminal(`📋 BREAKDOWN: ${wordSegments.length} word segments, ${silenceSegments.length} silence segments`);
+      const finalWordSegments = allSegments.filter(s => s.segment_type === "word");
+      const finalSilenceSegments = allSegments.filter(s => s.is_silence === true);
+      const finalGapSegments = allSegments.filter(s => s.segment_type === "gap");
+      await logToTerminal(`📋 BREAKDOWN: ${finalWordSegments.length} word segments, ${finalSilenceSegments.length} silence segments, ${finalGapSegments.length} gap segments`);
       
       // Show first few segments for debugging
       await logToTerminal(`🔍 FIRST 10 SEGMENTS:`);
       for (let i = 0; i < Math.min(10, allSegments.length); i++) {
         const seg = allSegments[i];
-        const type = seg.isSilence ? '🔇 SILENCE' : '🗣️ SPEECH';
+        let type = '🗣️ SPEECH';
+        if (seg.segment_type === 'gap') type = '⏸️ GAP';
+        else if (seg.is_silence === true) type = '🔇 SILENCE';
         await logToTerminal(`  ${i + 1}. ${type}: ${seg.start.toFixed(1)}s-${seg.end.toFixed(1)}s "${seg.text.substring(0, 30)}${seg.text.length > 30 ? '...' : ''}"`);
       }
       
@@ -725,7 +840,8 @@ function App() {
       )}
       
       <header className="app-header">
-        <h1>🎬 script-track</h1>
+        <h1>🎬 AudioClean Pro</h1>
+        <p>Remove silence from your videos automatically</p>
         <p>Edit your screen recordings by editing the words you spoke</p>
         <div className="keyboard-shortcuts">
           <span>⌨️ Shortcuts: Space (play/pause) • ←→ (skip 5s) • ↑↓ (volume) • Enter (jump to segment)</span>
@@ -898,12 +1014,12 @@ function App() {
                               // -60dB = 0%, -10dB = 100%
                               const height = Math.max(0, Math.min(100, ((level.volume_db + 60) / 50) * 100));
                               const isCurrentTime = Math.abs(level.timestamp - currentTime) < 0.1;
-                              const isSilence = level.volume_db < -40; // Default threshold for visualization
+                              const is_silence = level.volume_db < (autoDetectedThreshold || -40); // Use auto-detected threshold
                               
                               return (
                                 <div
                                   key={index}
-                                  className={`audio-bar ${isCurrentTime ? 'current' : ''} ${isSilence ? 'silence' : ''}`}
+                                  className={`audio-bar ${isCurrentTime ? 'current' : ''} ${is_silence ? 'silence' : ''}`}
                                   style={{
                                     height: `${height}%`,
                                     width: `${100 / audioVisualizationData.length}%`
@@ -920,16 +1036,18 @@ function App() {
                             </div>
                             <div className="legend-item">
                               <div className="legend-color silence"></div>
-                              <span>Silence (below -40dB)</span>
+                              <span>Silence (below {autoDetectedThreshold ? `${autoDetectedThreshold.toFixed(1)}dB` : '-40dB'})</span>
                             </div>
                             <div className="legend-item">
                               <div className="legend-color current"></div>
                               <span>Current Time</span>
                             </div>
-                          </div>
                         </div>
-                      )}
-            </div>
+                      </div>
+                    )}
+                  </div>
+
+
 
             <div className="transcript-panel">
               <div className="transcript-header">
@@ -1024,6 +1142,41 @@ function App() {
                         />
                       </div>
                       
+                      <div className="enhance-audio-control">
+                        <label className="enhance-checkbox">
+                          <input
+                            type="checkbox"
+                            checked={shouldEnhanceAudio}
+                            onChange={async (e) => {
+                              const isChecked = e.target.checked;
+                              setShouldEnhanceAudio(isChecked);
+                              
+                              if (isChecked) {
+                                // Start enhancement
+                                await enhanceAudio();
+                              } else {
+                                // Undo enhancement - revert to original video
+                                if (enhancedVideoPath && videoPath) {
+                                  setIsEnhancingAudio(true);
+                                  try {
+                                    await logToTerminal('🔄 Reverting to original audio...');
+                                    setVideoPath(videoPath.replace('_enhanced', ''));
+                                    setEnhancedVideoPath(null);
+                                    await loadAudioVisualization(videoPath.replace('_enhanced', ''));
+                                    await logToTerminal('✅ Reverted to original audio');
+                                  } finally {
+                                    setIsEnhancingAudio(false);
+                                  }
+                                }
+                              }
+                            }}
+                            disabled={isEnhancingAudio}
+                            title="Enhance audio quality with speech boost and general audio improvement"
+                          />
+                          <span>🎵 Enhance Audio {isEnhancingAudio && '(Processing...)'}</span>
+                        </label>
+                      </div>
+                      
                       {hasSilenceDetection && (
                         <div className="silence-actions">
                           <button 
@@ -1060,44 +1213,88 @@ function App() {
                             </span>
                           </div>
                           
-                          <div className="audio-settings">
-                            <div className="settings-row">
-                              <label className="setting-item" title="Minimum duration for silence to be detected - shorter pauses will be ignored">
-                                Min Duration: 
-                                <input
-                                  type="range" 
-                                  min="0.1" 
-                                  max="2.0" 
-                                  step="0.1"
-                                  value={minSilenceDuration}
-                                  onChange={(e) => {
-                                    const newDuration = parseFloat(e.target.value);
-                                    console.log('🔇 MIN DURATION CHANGED:', { 
-                                      from: minSilenceDuration, 
-                                      to: newDuration 
-                                    });
-                                    setMinSilenceDuration(newDuration);
-                                  }}
-                                  title="Minimum duration for silence to be detected - shorter pauses will be ignored"
-                                />
-                                <span>{minSilenceDuration}s</span>
-                              </label>
-                            </div>
-                          </div>
+            <div className="audio-settings">
+              <div className="settings-row">
+                <label className="setting-item" title="Minimum duration for silence to be detected - shorter pauses will be ignored">
+                  Min Duration:
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="2.0"
+                    step="0.1"
+                    value={minSilenceDuration}
+                    onChange={(e) => {
+                      const newDuration = parseFloat(e.target.value);
+                      console.log('🔇 MIN DURATION CHANGED:', {
+                        from: minSilenceDuration,
+                        to: newDuration
+                      });
+                      setMinSilenceDuration(newDuration);
+                    }}
+                    title="Minimum duration for silence to be detected - shorter pauses will be ignored"
+                  />
+                  <span>{minSilenceDuration}s</span>
+                </label>
+              </div>
+              
+              
+              {/* Audio Quality Badge */}
+              {audioQuality && (
+                <div className={`quality-badge quality-${audioQuality.quality_rating.toLowerCase()}`}>
+                  <span className="quality-icon">
+                    {audioQuality.quality_rating === "Excellent" && "🟢"}
+                    {audioQuality.quality_rating === "Good" && "🟡"}
+                    {audioQuality.quality_rating === "Fair" && "🟠"}
+                    {audioQuality.quality_rating === "Poor" && "🔴"}
+                  </span>
+                  <span className="quality-text">
+                    Audio Quality: {audioQuality.quality_rating}
+                  </span>
+                  {audioQuality.contrast_db < 15 && (
+                    <div className="quality-tip">
+                      {audioQuality.recommendation}
+                    </div>
+                  )}
+                </div>
+              )}
+              
+              <div className="settings-row">
+                <label className="setting-item" title="Cut the quietest X% of your audio">
+                  Quietness Threshold:
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="0.5"
+                    step="0.05"
+                    value={quietnessPercentile}
+                    onChange={(e) => {
+                      const newPercentile = parseFloat(e.target.value);
+                      setQuietnessPercentile(newPercentile);
+                    }}
+                    title="Cut the quietest X% of your audio"
+                  />
+                  <span>Cut quietest {(quietnessPercentile * 100).toFixed(0)}%</span>
+                </label>
+                <div className="setting-help">
+                  Removes the quietest portions of your video, regardless of absolute volume levels.
+                </div>
+              </div>
+            </div>
                           
-                          <div className="detection-buttons">
-                            <button 
-                              className="detect-btn" 
-                              onClick={() => {
-                                console.log('🔍 DETECT SILENCE BUTTON CLICKED');
-                                console.log('🔍 About to call detectSilentParts function...');
-                                detectSilentParts();
-                                console.log('🔍 detectSilentParts function completed');
-                              }}
-                            >
-                              🎵 Detect Silence
-                            </button>
-                          </div>
+            <div className="detection-buttons">
+              
+              <button
+                className="detect-btn"
+                onClick={() => {
+                  console.log('🔍 DETECT SILENCE BUTTON CLICKED');
+                  console.log('🔍 About to call detectSilentParts function...');
+                  detectSilentParts();
+                  console.log('🔍 detectSilentParts function completed');
+                }}
+              >
+                🎵 Detect Silence
+              </button>
+            </div>
                         </div>
                       )}
                       
@@ -1160,7 +1357,7 @@ function App() {
                 {isTranscribing ? (
                   <div className="transcribing">
                     <div className="spinner"></div>
-                    <p>Transcribing with Whisper...</p>
+                    <p>Transcribing your audio...</p>
                     <div className="progress-bar">
                       <div 
                         className="progress-fill" 
@@ -1174,7 +1371,11 @@ function App() {
                     {transcript.map((segment) => (
                       <span
                         key={segment.id}
-                        className={`inline-word ${!segment.keep ? 'removed' : ''} ${segment.isSilence ? 'silence-segment' : ''} ${segment.isSplit ? 'split-segment' : ''} ${segment.id === currentSegmentId ? 'active' : ''} ${segment.id === selectedWordId ? 'selected' : ''}`}
+                        className={`inline-word ${!segment.keep ? 'removed' : ''} ${segment.is_silence ? 'silence-segment' : ''} ${segment.isSplit ? 'split-segment' : ''} ${segment.segment_type === 'gap' ? 'gap-segment' : ''} ${segment.id === currentSegmentId ? 'active' : ''} ${segment.id === selectedWordId ? 'selected' : ''}`}
+                        title={segment.segment_type === 'gap' 
+                          ? `Gap: ${segment.start.toFixed(1)}s - ${segment.end.toFixed(1)}s (${(segment.end - segment.start).toFixed(1)}s duration)`
+                          : `${segment.text}: ${segment.start.toFixed(1)}s - ${segment.end.toFixed(1)}s`
+                        }
                         onClick={() => {
                           console.log('🎯 SEGMENT CLICKED:', {
                             id: segment.id,
@@ -1182,7 +1383,7 @@ function App() {
                             start: segment.start,
                             end: segment.end,
                             keep: segment.keep,
-                            isSilence: segment.isSilence
+                            is_silence: segment.is_silence
                           });
                           // Select the word to show actions
                           setSelectedWordId(segment.id === selectedWordId ? null : segment.id);
@@ -1190,7 +1391,7 @@ function App() {
                           handleSegmentClick(segment);
                         }}
                         onDoubleClick={() => {
-                          if (!segment.isSilence) {
+                          if (!segment.is_silence) {
                             console.log('✏️ SEGMENT DOUBLE-CLICKED (EDIT):', {
                               id: segment.id,
                               text: segment.text
@@ -1199,7 +1400,7 @@ function App() {
                           }
                         }}
                       >
-                        {segment.isSilence ? (
+                        {segment.is_silence ? (
                           <span className="silence-content">
                             🔇 Silence ({(segment.end - segment.start).toFixed(1)}s)
                           </span>
@@ -1216,7 +1417,7 @@ function App() {
                         {/* Action panel - shown only when selected */}
                         {segment.id === selectedWordId && (
                           <div className="word-action-panel">
-                            {segment.isSilence ? (
+                            {segment.is_silence ? (
                               <button 
                                 className="action-btn silence-toggle-btn"
                                 onClick={(e) => {

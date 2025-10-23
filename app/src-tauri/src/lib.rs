@@ -406,41 +406,142 @@ async fn detect_audio_silence(
         return Err("Cannot detect silence in blob URLs with external tools".to_string());
     }
     
-    // Use a different approach - detect "quiet parts" instead of true silence
-    // We'll analyze the audio in chunks and find parts below the threshold
-    let output = Command::new("ffmpeg")
-        .arg("-i")
-        .arg(&file_path)
-        .arg("-af")
-        .arg("astats=metadata=1:reset=1")
-        .arg("-f")
-        .arg("null")
-        .arg("-")
+    // Use chunk-based analysis to find quiet parts
+    // First, get the video duration
+    let duration_output = Command::new("ffprobe")
         .arg("-v")
-        .arg("info")
+        .arg("quiet")
+        .arg("-show_entries")
+        .arg("format=duration")
+        .arg("-of")
+        .arg("csv=p=0")
+        .arg(&file_path)
         .output();
     
-    match output {
+    let duration: f64 = match duration_output {
         Ok(result) => {
-            let stderr = String::from_utf8_lossy(&result.stderr);
-            println!("FFmpeg stderr output:\n{}", stderr);
-            
-            // Parse the audio statistics to find quiet parts
-            let silence_regions = parse_quiet_parts(&stderr, noise_threshold, min_duration);
-            println!("Found {} quiet regions", silence_regions.len());
-            
-            for (i, region) in silence_regions.iter().enumerate() {
-                println!("  Region {}: {:.2}s - {:.2}s (duration: {:.2}s)", 
-                    i + 1, region.start, region.end, region.duration);
-            }
-            
-            Ok(silence_regions)
+            let output_str = String::from_utf8_lossy(&result.stdout);
+            output_str.trim().parse().unwrap_or(0.0)
         }
-        Err(e) => {
-            println!("❌ Failed to run FFmpeg: {}", e);
-            Err(format!("Failed to run FFmpeg: {}", e))
+        Err(_) => {
+            println!("❌ Failed to get video duration");
+            return Err("Failed to get video duration".to_string());
+        }
+    };
+    
+    println!("📊 Video duration: {:.1}s", duration);
+    
+    // Analyze audio in 0.1s chunks
+    let chunk_size = 0.1;
+    let mut quiet_samples = Vec::new();
+    
+    for chunk_start in (0..(duration as i32 * 10)).step_by(1) {
+        let start_time = chunk_start as f64 * chunk_size;
+        let end_time = (start_time + chunk_size).min(duration);
+        
+        if start_time >= duration {
+            break;
+        }
+        
+        // Analyze this chunk
+        let chunk_output = Command::new("ffmpeg")
+            .arg("-ss")
+            .arg(&format!("{:.1}", start_time))
+            .arg("-t")
+            .arg(&format!("{:.1}", chunk_size))
+            .arg("-i")
+            .arg(&file_path)
+            .arg("-af")
+            .arg("volumedetect")
+            .arg("-f")
+            .arg("null")
+            .arg("-")
+            .arg("-v")
+            .arg("quiet")
+            .output();
+        
+        if let Ok(result) = chunk_output {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            
+            // Parse volume from volumedetect output
+            if let Some(volume) = parse_volume_from_output(&stderr) {
+                if volume < noise_threshold {
+                    quiet_samples.push((start_time, volume));
+                }
+            }
         }
     }
+    
+    println!("📊 Found {} quiet samples out of {} total chunks", quiet_samples.len(), (duration / chunk_size) as usize);
+    
+    // Group consecutive quiet samples into regions
+    let silence_regions = group_quiet_samples(quiet_samples, min_duration);
+    println!("🎯 Found {} quiet regions", silence_regions.len());
+    
+    for (i, region) in silence_regions.iter().enumerate() {
+        println!("  Region {}: {:.2}s - {:.2}s (duration: {:.2}s)", 
+            i + 1, region.start, region.end, region.duration);
+    }
+    
+    Ok(silence_regions)
+}
+
+fn parse_volume_from_output(output: &str) -> Option<f64> {
+    use regex::Regex;
+    
+    // Look for "mean_volume: -XX.X dB" in the output
+    let re = Regex::new(r"mean_volume:\s*(-?\d+\.?\d*)\s*dB").unwrap();
+    
+    if let Some(captures) = re.captures(output) {
+        if let Some(volume_str) = captures.get(1) {
+            if let Ok(volume) = volume_str.as_str().parse::<f64>() {
+                return Some(volume);
+            }
+        }
+    }
+    
+    None
+}
+
+fn group_quiet_samples(samples: Vec<(f64, f64)>, min_duration: f64) -> Vec<SilenceRegion> {
+    if samples.is_empty() {
+        return Vec::new();
+    }
+    
+    let mut regions = Vec::new();
+    let mut current_start = samples[0].0;
+    let mut current_end = samples[0].0 + 0.1; // Each sample is 0.1s
+    
+    for (time, _volume) in samples.iter().skip(1) {
+        // If this sample is within 0.2s of the current region, extend it
+        if *time <= current_end + 0.2 {
+            current_end = *time + 0.1;
+        } else {
+            // Start a new region
+            let duration = current_end - current_start;
+            if duration >= min_duration {
+                regions.push(SilenceRegion {
+                    start: current_start,
+                    end: current_end,
+                    duration,
+                });
+            }
+            current_start = *time;
+            current_end = *time + 0.1;
+        }
+    }
+    
+    // Add the last region
+    let duration = current_end - current_start;
+    if duration >= min_duration {
+        regions.push(SilenceRegion {
+            start: current_start,
+            end: current_end,
+            duration,
+        });
+    }
+    
+    regions
 }
 
 fn parse_quiet_parts(output: &str, threshold: f64, min_duration: f64) -> Vec<SilenceRegion> {

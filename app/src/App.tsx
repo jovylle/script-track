@@ -12,13 +12,27 @@ interface TranscriptSegment {
   isSilence?: boolean;
 }
 
+interface SilenceRegion {
+  start: number;
+  end: number;
+  duration: number;
+}
+
 interface TranscriptionResult {
   segments: TranscriptSegment[];
   duration: number;
 }
 
+// Helper function to log to terminal instead of browser console
+const logToTerminal = async (message: string) => {
+  try {
+    await invoke('log_to_terminal', { message });
+  } catch (e) {
+    console.log(message); // Fallback to console if terminal logging fails
+  }
+};
+
 function App() {
-  console.log('🚀 APP COMPONENT RENDERED');
   const [videoFile, setVideoFile] = useState<string | null>(null);
   const [videoPath, setVideoPath] = useState<string | null>(null);
   const [isTranscribing, setIsTranscribing] = useState(false);
@@ -35,11 +49,169 @@ function App() {
   const [editText, setEditText] = useState('');
   const [silenceThreshold, setSilenceThreshold] = useState(1.0);
   const [showSilenceSettings, setShowSilenceSettings] = useState(false);
+  const [noiseThreshold, setNoiseThreshold] = useState(-30.0);
+  const [minSilenceDuration, setMinSilenceDuration] = useState(0.5);
   const [audioBoost, setAudioBoost] = useState(1.0);
   const [playbackSpeed, setPlaybackSpeed] = useState(1.0);
   const [currentSegmentId, setCurrentSegmentId] = useState<number | string | null>(null);
   const [isPreviewMode, setIsPreviewMode] = useState(true);
   const [exportETA, setExportETA] = useState<string>('');
+  const [selectedWordId, setSelectedWordId] = useState<number | string | null>(null);
+  const [excludedSilenceRegions, setExcludedSilenceRegions] = useState<Set<string>>(new Set());
+  const [isUploading, setIsUploading] = useState(false);
+  const [exportedFilePath, setExportedFilePath] = useState<string | null>(null);
+  
+  // Undo/Redo for silence detection
+  const [transcriptHistory, setTranscriptHistory] = useState<TranscriptSegment[][]>([]);
+  const [historyIndex, setHistoryIndex] = useState(-1);
+  const [hasSilenceDetection, setHasSilenceDetection] = useState(false);
+
+  // Handle ESC key to deselect word
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === 'Escape' && selectedWordId !== null) {
+        setSelectedWordId(null);
+      }
+    };
+    
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, [selectedWordId]);
+
+  // Handle click outside to close action panel
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (selectedWordId !== null) {
+        const target = e.target as Element;
+        // Check if click is outside any word or action panel
+        if (!target.closest('.inline-word') && !target.closest('.word-action-panel')) {
+          setSelectedWordId(null);
+        }
+      }
+    };
+    
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [selectedWordId]);
+
+  // History management functions
+  const saveToHistory = (newTranscript: TranscriptSegment[]) => {
+    console.log('📚 SAVING TO HISTORY:', {
+      currentIndex: historyIndex,
+      historyLength: transcriptHistory.length,
+      newTranscriptLength: newTranscript.length
+    });
+    
+    const newHistory = transcriptHistory.slice(0, historyIndex + 1);
+    newHistory.push([...newTranscript]);
+    
+    setTranscriptHistory(newHistory);
+    setHistoryIndex(newHistory.length - 1);
+  };
+
+  const undo = () => {
+    if (historyIndex > 0) {
+      const newIndex = historyIndex - 1;
+      console.log('↶ UNDO:', { from: historyIndex, to: newIndex });
+      setHistoryIndex(newIndex);
+      setTranscript(transcriptHistory[newIndex]);
+    }
+  };
+
+  const redo = () => {
+    if (historyIndex < transcriptHistory.length - 1) {
+      const newIndex = historyIndex + 1;
+      console.log('↷ REDO:', { from: historyIndex, to: newIndex });
+      setHistoryIndex(newIndex);
+      setTranscript(transcriptHistory[newIndex]);
+    }
+  };
+
+  const clearSilenceDetection = () => {
+    console.log('🧹 CLEARING SILENCE DETECTION');
+    const speechOnly = transcript.filter(s => !s.isSilence);
+    setTranscript(speechOnly);
+    setHasSilenceDetection(false);
+    saveToHistory(speechOnly);
+  };
+
+  // Silence region management functions
+  const getSilenceRegionKey = (start: number, end: number) => `${start.toFixed(2)}-${end.toFixed(2)}`;
+
+  const excludeAllSilence = () => {
+    console.log('✂️ EXCLUDING ALL SILENCE REGIONS');
+    const newExcluded = new Set<string>();
+    transcript.forEach(segment => {
+      if (segment.isSilence) {
+        newExcluded.add(getSilenceRegionKey(segment.start, segment.end));
+      }
+    });
+    setExcludedSilenceRegions(newExcluded);
+    
+    // Update transcript to mark excluded silence as removed
+    const updatedTranscript = transcript.map(segment => {
+      if (segment.isSilence) {
+        return { ...segment, keep: false };
+      }
+      return segment;
+    });
+    setTranscript(updatedTranscript);
+    saveToHistory(updatedTranscript);
+  };
+
+  const includeAllSilence = () => {
+    console.log('➕ INCLUDING ALL SILENCE REGIONS');
+    setExcludedSilenceRegions(new Set());
+    
+    // Update transcript to mark all silence as kept
+    const updatedTranscript = transcript.map(segment => {
+      if (segment.isSilence) {
+        return { ...segment, keep: true };
+      }
+      return segment;
+    });
+    setTranscript(updatedTranscript);
+    saveToHistory(updatedTranscript);
+  };
+
+  const toggleSilenceRegion = (start: number, end: number) => {
+    const key = getSilenceRegionKey(start, end);
+    const newExcluded = new Set(excludedSilenceRegions);
+    
+    if (newExcluded.has(key)) {
+      newExcluded.delete(key);
+      console.log('➕ INCLUDING silence region:', key);
+    } else {
+      newExcluded.add(key);
+      console.log('✂️ EXCLUDING silence region:', key);
+    }
+    
+    setExcludedSilenceRegions(newExcluded);
+    
+    // Update transcript
+    const updatedTranscript = transcript.map(segment => {
+      if (segment.isSilence && 
+          Math.abs(segment.start - start) < 0.1 && 
+          Math.abs(segment.end - end) < 0.1) {
+        return { ...segment, keep: !newExcluded.has(key) };
+      }
+      return segment;
+    });
+    setTranscript(updatedTranscript);
+    saveToHistory(updatedTranscript);
+  };
+
+  // Open exported file location
+  const openExportedFileLocation = async () => {
+    if (!exportedFilePath) return;
+    
+    try {
+      console.log('📁 Opening exported file location:', exportedFilePath);
+      await invoke('open_file_location', { filePath: exportedFilePath });
+    } catch (error) {
+      console.error('Failed to open file location:', error);
+    }
+  };
 
   // Drag and drop handlers
   const handleDragOver = (e: React.DragEvent) => {
@@ -54,7 +226,7 @@ function App() {
     setIsDragOver(false);
   };
 
-  const handleDrop = (e: React.DragEvent) => {
+  const handleDrop = async (e: React.DragEvent) => {
     e.preventDefault();
     setIsDragOver(false);
     
@@ -69,9 +241,31 @@ function App() {
         type: videoFile.type,
         size: videoFile.size
       });
-      setVideoFile(videoFile.name);
-      setVideoPath(URL.createObjectURL(videoFile));
+      
+      setIsUploading(true);
+      
+      // Create blob URL for video player
+      const blobUrl = URL.createObjectURL(videoFile);
+      console.log('🎬 Created blob URL for video:', blobUrl);
+      setVideoFile(blobUrl);
       setVideoDuration(12.5); // Mock duration
+
+      // Save the file immediately and store the actual path
+      try {
+        const fileData = new Uint8Array(await videoFile.arrayBuffer());
+        const savedPath = await invoke<string>('save_uploaded_file', {
+          fileData: Array.from(fileData),
+          filename: videoFile.name
+        });
+        console.log('📁 File saved to:', savedPath);
+        console.log('📁 Setting videoPath to:', savedPath);
+        setVideoPath(savedPath); // Store actual file path, not blob URL!
+      } catch (error) {
+        console.error('❌ Error saving file:', error);
+        setVideoPath(blobUrl); // Fallback to blob URL if save fails
+      } finally {
+        setIsUploading(false);
+      }
 
       // Try to get actual duration from video element
       const video = document.createElement('video');
@@ -84,7 +278,7 @@ function App() {
         });
         setVideoDuration(video.duration);
       };
-      video.src = URL.createObjectURL(videoFile);
+      video.src = blobUrl;
       
       // Store the actual file for transcription
       (window as any).currentVideoFile = videoFile;
@@ -193,7 +387,7 @@ function App() {
     const input = document.createElement('input');
     input.type = 'file';
     input.accept = 'video/*,audio/*';
-    input.onchange = (e) => {
+    input.onchange = async (e) => {
       const file = (e.target as HTMLInputElement).files?.[0];
       if (file) {
         console.log('📁 FILE SELECTED:', {
@@ -202,9 +396,31 @@ function App() {
           type: file.type,
           lastModified: new Date(file.lastModified)
         });
-        setVideoFile(file.name);
-        setVideoPath(URL.createObjectURL(file)); // Create object URL for video playback
+        
+        setIsUploading(true);
+        
+        // Create blob URL for video player
+        const blobUrl = URL.createObjectURL(file);
+        console.log('🎬 Created blob URL for video:', blobUrl);
+        setVideoFile(blobUrl);
         setVideoDuration(12.5); // Mock duration
+
+        // Save the file immediately and store the actual path
+        try {
+          const fileData = new Uint8Array(await file.arrayBuffer());
+          const savedPath = await invoke<string>('save_uploaded_file', {
+            fileData: Array.from(fileData),
+            filename: file.name
+          });
+          console.log('📁 File saved to:', savedPath);
+          console.log('📁 Setting videoPath to:', savedPath);
+          setVideoPath(savedPath); // Store actual file path, not blob URL!
+        } catch (error) {
+          console.error('❌ Error saving file:', error);
+          setVideoPath(blobUrl); // Fallback to blob URL if save fails
+        } finally {
+          setIsUploading(false);
+        }
 
         // Try to get actual duration from video element
         const video = document.createElement('video');
@@ -217,7 +433,7 @@ function App() {
           });
           setVideoDuration(video.duration);
         };
-        video.src = URL.createObjectURL(file);
+        video.src = blobUrl;
         
         // Store the actual file for transcription
         (window as any).currentVideoFile = file;
@@ -261,12 +477,15 @@ function App() {
             const result = await invoke<TranscriptionResult>('transcribe_audio', { 
                 filePath: filePath 
             });
-            console.log('Transcription result:', result);
-            console.log('Number of segments received:', result.segments.length);
-            console.log('First few segments:', result.segments.slice(0, 3));
-      setTranscript(result.segments);
-      setVideoDuration(result.duration);
-      setTranscriptionProgress(100);
+              console.log('Transcription result:', result);
+              console.log('Number of segments received:', result.segments.length);
+              console.log('First few segments:', result.segments.slice(0, 3));
+              setTranscript(result.segments);
+              setVideoDuration(result.duration);
+              setTranscriptionProgress(100);
+              
+              // Initialize history with the original transcript
+              saveToHistory(result.segments);
     } catch (error) {
       console.error('Error transcribing audio:', error);
       // Fallback to mock data
@@ -277,9 +496,12 @@ function App() {
         { id: 3, start: 6.2, end: 9.0, text: "Oops I made a mistake here", keep: false },
         { id: 4, start: 9.1, end: 12.5, text: "Let me continue with the demo", keep: true },
       ];
-      console.log('Setting mock segments:', mockSegments);
-      setTranscript(mockSegments);
-      setTranscriptionProgress(100);
+              console.log('Setting mock segments:', mockSegments);
+              setTranscript(mockSegments);
+              setTranscriptionProgress(100);
+              
+              // Initialize history with mock data too
+              saveToHistory(mockSegments);
     } finally {
       clearInterval(progressInterval);
       setIsTranscribing(false);
@@ -395,6 +617,7 @@ function App() {
       
       console.log('✅ Export completed successfully:', result);
       setExportProgress(100);
+      setExportedFilePath(result);
       alert(`Video exported successfully! Output: ${result}`);
     } catch (error) {
       console.error('❌ Error exporting video:', error);
@@ -406,31 +629,91 @@ function App() {
     }
   };
 
-  const detectSilentParts = () => {
-    console.log('🔇 DETECTING SILENT PARTS:', {
-      threshold: silenceThreshold,
-      totalSegments: transcript.length
-    });
+  const detectSilentParts = async () => {
+    await logToTerminal(`🔇 DETECTING SILENT PARTS (Audio-Based): threshold=${noiseThreshold}dB, minDuration=${minSilenceDuration}s, segments=${transcript.length}`);
+    
+    if (!videoPath) {
+      await logToTerminal('❌ No video path available for silence detection');
+      return;
+    }
+    
+    await logToTerminal(`📁 Using video path: ${videoPath}`);
+    await logToTerminal(`📁 videoPath type: ${typeof videoPath}, starts with blob: ${videoPath?.startsWith('blob:')}`);
+    await logToTerminal(`🎯 Video duration: ${videoDuration}s, Transcript segments: ${transcript.length}`);
+    
+    try {
+      // Call the Rust backend to detect actual silence in the audio
+      await logToTerminal('🎵 Calling FFmpeg silence detection...');
+      await logToTerminal(`📊 Parameters: noise_threshold=${noiseThreshold}dB, min_duration=${minSilenceDuration}s`);
+      
+      const silenceRegions: SilenceRegion[] = await invoke('detect_audio_silence', {
+        filePath: videoPath,
+        noiseThreshold,
+        minDuration: minSilenceDuration
+      });
+      
+      await logToTerminal(`📈 FFmpeg returned ${silenceRegions.length} silence regions`);
+      if (silenceRegions.length > 0) {
+        await logToTerminal(`📋 First few regions: ${silenceRegions.slice(0, 3).map(r => `${r.start.toFixed(2)}s-${r.end.toFixed(2)}s`).join(', ')}`);
+      }
+      await logToTerminal(`🎯 Found ${silenceRegions.length} silence regions from audio analysis`);
+      
+      // Remove existing silence segments first
+      const speechSegments = transcript.filter(s => !s.isSilence);
+      await logToTerminal(`📋 SPEECH SEGMENTS: ${speechSegments.length}`);
+      
+      // Convert silence regions to transcript segments
+      const silentSegments: TranscriptSegment[] = silenceRegions.map((region, index) => ({
+        id: `silence-${index}-${Date.now()}`,
+        start: region.start,
+        end: region.end,
+        text: `[Silence: ${region.duration.toFixed(1)}s]`,
+        keep: false,
+        isSilence: true
+      }));
+      
+      for (const seg of silentSegments) {
+        await logToTerminal(`  🔇 Silence: ${seg.start.toFixed(2)}s - ${seg.end.toFixed(2)}s (${(seg.end - seg.start).toFixed(2)}s)`);
+      }
+      
+      // Combine speech and silence segments
+      const allSegments = [...speechSegments, ...silentSegments];
+      
+      // Sort by start time
+      allSegments.sort((a, b) => a.start - b.start);
+      
+      // Save to history and update transcript
+      saveToHistory(transcript);
+      setTranscript(allSegments);
+      setHasSilenceDetection(true);
+      
+      await logToTerminal(`✅ Audio-based silence detection complete: ${silentSegments.length} silence regions added`);
+      
+    } catch (error) {
+      await logToTerminal(`❌ Error detecting silence: ${error}`);
+      // Fallback to the old gap-based method if audio detection fails
+      await logToTerminal('🔄 Falling back to gap-based detection...');
+      detectSilentPartsGapBased();
+    }
+  };
+  
+  // Fallback method using the old gap-based approach
+  const detectSilentPartsGapBased = async () => {
+    await logToTerminal(`🔇 DETECTING SILENT PARTS (Gap-Based Fallback): threshold=${silenceThreshold}s, segments=${transcript.length}`);
     
     // Remove existing silence segments first
     const speechSegments = transcript.filter(s => !s.isSilence);
-    console.log('📋 SPEECH SEGMENTS:', speechSegments.map((s, i) => ({
-      index: i,
-      text: s.text,
-      start: s.start.toFixed(2),
-      end: s.end.toFixed(2),
-      duration: (s.end - s.start).toFixed(2)
-    })));
+    await logToTerminal(`📋 SPEECH SEGMENTS: ${speechSegments.length}`);
     
     const silentSegments: TranscriptSegment[] = [];
     
-    // NEW APPROACH: Look for gaps in the timeline
-    console.log('🔍 ANALYZING TIMELINE FOR GAPS:');
+    // Look for gaps in the timeline
+    await logToTerminal('🔍 ANALYZING TIMELINE FOR GAPS');
     
     // Sort segments by start time
     const sortedSegments = [...speechSegments].sort((a, b) => a.start - b.start);
     
-    console.log(`📊 Analyzing ${sortedSegments.length} individual word segments for gaps...`);
+    await logToTerminal(`📊 Analyzing ${sortedSegments.length} individual word segments for gaps...`);
     
     for (let i = 0; i < sortedSegments.length - 1; i++) {
       const current = sortedSegments[i];
@@ -439,11 +722,8 @@ function App() {
       // Calculate the actual gap between segments
       const gap = next.start - current.end;
       
-      console.log(`Gap ${i}: "${current.text}" ends at ${current.end.toFixed(2)}s → "${next.text}" starts at ${next.start.toFixed(2)}s`);
-      console.log(`  Gap duration: ${gap.toFixed(2)}s (threshold: ${silenceThreshold}s)`);
-      
       if (gap > silenceThreshold) {
-        console.log(`  ✅ SILENCE DETECTED: ${gap.toFixed(2)}s > ${silenceThreshold}s`);
+        await logToTerminal(`  ✅ Gap ${i}: ${gap.toFixed(2)}s detected between "${current.text}" and "${next.text}"`);
         silentSegments.push({
           id: `silence-${i}-${Date.now()}`,
           start: current.end,
@@ -452,8 +732,6 @@ function App() {
           keep: false,
           isSilence: true
         });
-      } else {
-        console.log(`  ❌ No silence: ${gap.toFixed(2)}s <= ${silenceThreshold}s`);
       }
     }
     
@@ -465,7 +743,7 @@ function App() {
     if (firstSegment && firstSegment.start > 0.5) {
       const startGap = firstSegment.start;
       if (startGap > silenceThreshold) {
-        console.log(`✅ SILENCE AT START: ${startGap.toFixed(2)}s`);
+        await logToTerminal(`✅ SILENCE AT START: ${startGap.toFixed(2)}s`);
         silentSegments.push({
           id: `silence-start-${Date.now()}`,
           start: 0,
@@ -477,29 +755,34 @@ function App() {
       }
     }
     
-    console.log('🔇 SILENCE DETECTION RESULTS:', {
-      found: silentSegments.length,
-      segments: silentSegments.map(s => ({ 
-        text: s.text, 
-        duration: (s.end - s.start).toFixed(1) + 's',
-        start: s.start.toFixed(1) + 's',
-        end: s.end.toFixed(1) + 's'
-      }))
-    });
+    await logToTerminal(`🔇 SILENCE DETECTION RESULTS: Found ${silentSegments.length} gaps`);
     
     // Combine speech and silence segments
     const combined = [...speechSegments, ...silentSegments].sort((a, b) => a.start - b.start);
     setTranscript(combined);
+    setHasSilenceDetection(true);
+    saveToHistory(combined);
     
     if (silentSegments.length === 0) {
-      console.log('❌ No silent parts found. Try lowering the threshold or check if your video has actual pauses.');
+      await logToTerminal('❌ No silent parts found. Try lowering the threshold or check if your video has actual pauses.');
     } else {
-      console.log(`✅ Found ${silentSegments.length} silent parts! They should appear in orange in the transcript.`);
+      await logToTerminal(`✅ Found ${silentSegments.length} silent parts using gap-based fallback`);
     }
   };
 
   return (
     <div className="app">
+      {/* Loading overlay */}
+      {isUploading && (
+        <div className="loading-overlay">
+          <div className="loading-content">
+            <div className="loading-spinner"></div>
+            <p>Uploading video...</p>
+            <p className="loading-subtitle">Please wait while we process your file</p>
+          </div>
+        </div>
+      )}
+      
       <header className="app-header">
         <h1>🎬 script-track</h1>
         <p>Edit your screen recordings by editing the words you spoke</p>
@@ -530,11 +813,14 @@ function App() {
           <div className="workspace">
             <div className="video-panel">
               <div className="video-container">
-                {videoPath && videoPath !== videoFile ? (
+                {console.log('🎬 Rendering video element, videoFile:', videoFile)}
+                {videoFile ? (
                   <video
                     ref={setVideoElement}
                     className="video-player"
-                    controls
+                    onLoadStart={() => console.log('🎬 Video load started')}
+                    onLoadedData={() => console.log('🎬 Video data loaded')}
+                    onError={(e) => console.error('🎬 Video error:', e)}
                     onTimeUpdate={(e) => {
                       const time = e.currentTarget.currentTime;
                       setCurrentTime(time);
@@ -588,7 +874,7 @@ function App() {
                       console.log('⏸️ VIDEO PAUSE EVENT');
                       setIsPlaying(false);
                     }}
-                    src={videoPath}
+                    src={videoFile}
                   >
                     Your browser does not support the video tag.
                   </video>
@@ -601,6 +887,38 @@ function App() {
                 )}
       </div>
               
+                      {/* Custom timeline with progress bar */}
+                      <div className="video-timeline-container">
+                        <div className="timeline-track" onClick={(e) => {
+                          if (videoElement && videoDuration > 0) {
+                            const rect = e.currentTarget.getBoundingClientRect();
+                            const clickX = e.clientX - rect.left;
+                            const percentage = clickX / rect.width;
+                            const newTime = percentage * videoDuration;
+                            videoElement.currentTime = newTime;
+                            console.log('🎯 Timeline clicked:', { percentage: percentage.toFixed(2), newTime: newTime.toFixed(2) });
+                          }
+                        }}>
+                          <div 
+                            className="timeline-progress" 
+                            style={{ width: videoDuration > 0 ? `${(currentTime / videoDuration) * 100}%` : '0%' }}
+                          />
+                          <div 
+                            className="timeline-handle" 
+                            style={{ left: videoDuration > 0 ? `${(currentTime / videoDuration) * 100}%` : '0%' }}
+                          />
+                        </div>
+                        <div className="time-labels">
+                          <span className="current-time">
+                            {Math.floor(currentTime / 60)}:{(currentTime % 60).toFixed(1).padStart(4, '0')}
+                          </span>
+                          <span className="duration">
+                            {Math.floor(videoDuration / 60)}:{(videoDuration % 60).toFixed(1).padStart(4, '0')}
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Player controls */}
                       <div className="video-controls">
                         <button
                           className="control-btn"
@@ -623,44 +941,6 @@ function App() {
                         >
                           {isPlaying ? <Pause size={20} /> : <Play size={20} />}
                         </button>
-                        <div className="time-display">
-                          {Math.floor(currentTime / 60)}:{(currentTime % 60).toFixed(1).padStart(4, '0')}
-                        </div>
-                        
-                        <div className="audio-boost-control">
-                          <label>🔊 {Math.round(audioBoost * 100)}%</label>
-                          <input 
-                            type="range" 
-                            min="0" 
-                            max="2" 
-                            step="0.1"
-                            value={audioBoost}
-                            onChange={(e) => {
-                              const newBoost = parseFloat(e.target.value);
-                              console.log('🔊 AUDIO BOOST CHANGED:', { from: audioBoost, to: newBoost });
-                              setAudioBoost(newBoost);
-                            }}
-                          />
-                        </div>
-                        
-                        <div className="speed-control">
-                          <label>⏩</label>
-                          <select 
-                            value={playbackSpeed} 
-                            onChange={(e) => {
-                              const newSpeed = parseFloat(e.target.value);
-                              console.log('⏩ PLAYBACK SPEED CHANGED:', { from: playbackSpeed, to: newSpeed });
-                              setPlaybackSpeed(newSpeed);
-                            }}
-                          >
-                            <option value="0.5">0.5x</option>
-                            <option value="0.75">0.75x</option>
-                            <option value="1">1x</option>
-                            <option value="1.25">1.25x</option>
-                            <option value="1.5">1.5x</option>
-                            <option value="2">2x</option>
-                          </select>
-                        </div>
                       </div>
             </div>
 
@@ -743,30 +1023,133 @@ function App() {
                           setShowSilenceSettings(newState);
                         }}
                       >
-                        🔇 Remove Silence
+                        🔇 Silence Settings
                       </button>
+                      
+                      <div className="audio-boost-control">
+                        <label>🔊 Volume: {Math.round(audioBoost * 100)}%</label>
+                        <input 
+                          type="range" 
+                          min="0" 
+                          max="2" 
+                          step="0.1"
+                          value={audioBoost}
+                          onChange={(e) => {
+                            const newBoost = parseFloat(e.target.value);
+                            console.log('🔊 AUDIO BOOST CHANGED:', { from: audioBoost, to: newBoost });
+                            setAudioBoost(newBoost);
+                          }}
+                        />
+                      </div>
+                      
+                      {hasSilenceDetection && (
+                        <div className="silence-actions">
+                          <button 
+                            className="undo-btn"
+                            onClick={undo}
+                            disabled={historyIndex <= 0}
+                            title="Undo silence detection"
+                          >
+                            ↶ Undo
+                          </button>
+                          <button 
+                            className="redo-btn"
+                            onClick={redo}
+                            disabled={historyIndex >= transcriptHistory.length - 1}
+                            title="Redo silence detection"
+                          >
+                            ↷ Redo
+                          </button>
+                          <button 
+                            className="clear-btn"
+                            onClick={clearSilenceDetection}
+                            title="Remove all silence segments"
+                          >
+                            🧹 Clear
+                          </button>
+                        </div>
+                      )}
                       
                       {showSilenceSettings && (
                         <div className="silence-settings">
-                          <label>
-                            Threshold: 
-        <input
-                              type="range" 
-                              min="0.5" 
-                              max="3" 
-                              step="0.5"
-                              value={silenceThreshold}
-                              onChange={(e) => {
-                                const newThreshold = parseFloat(e.target.value);
-                                console.log('🔇 SILENCE THRESHOLD CHANGED:', { 
-                                  from: silenceThreshold, 
-                                  to: newThreshold 
-                                });
-                                setSilenceThreshold(newThreshold);
-                              }}
-                            />
-                            <span>{silenceThreshold}s</span>
-                          </label>
+                          <div className="silence-help">
+                            <span className="help-icon">ℹ️</span>
+                            <span className="help-text">
+                              Audio-based silence detection using FFmpeg analysis
+                            </span>
+                          </div>
+                          
+                          <div className="audio-settings">
+                            <label>
+                              Noise Level: 
+                              <div className="setting-description">Audio below this level will be marked as silence</div>
+                              <input
+                                type="range" 
+                                min="-50" 
+                                max="-10" 
+                                step="5"
+                                value={noiseThreshold}
+                                onChange={(e) => {
+                                  const newThreshold = parseFloat(e.target.value);
+                                  console.log('🔇 NOISE THRESHOLD CHANGED:', { 
+                                    from: noiseThreshold, 
+                                    to: newThreshold 
+                                  });
+                                  setNoiseThreshold(newThreshold);
+                                }}
+                              />
+                              <span>{noiseThreshold}dB</span>
+                            </label>
+                            
+                            <label>
+                              Min Duration: 
+                              <input
+                                type="range" 
+                                min="0.1" 
+                                max="2.0" 
+                                step="0.1"
+                                value={minSilenceDuration}
+                                onChange={(e) => {
+                                  const newDuration = parseFloat(e.target.value);
+                                  console.log('🔇 MIN DURATION CHANGED:', { 
+                                    from: minSilenceDuration, 
+                                    to: newDuration 
+                                  });
+                                  setMinSilenceDuration(newDuration);
+                                }}
+                              />
+                              <span>{minSilenceDuration}s</span>
+                            </label>
+                          </div>
+                          
+                          <div className="fallback-settings">
+                            <div className="fallback-help">
+                              <span className="help-icon">⚠️</span>
+                              <span className="help-text">
+                                Fallback: Gap-based detection (if audio analysis fails)
+                              </span>
+                            </div>
+                            <label>
+                              Gap Threshold: 
+                              <input
+                                type="range" 
+                                min="0.5" 
+                                max="3" 
+                                step="0.5"
+                                value={silenceThreshold}
+                                onChange={(e) => {
+                                  const newThreshold = parseFloat(e.target.value);
+                                  console.log('🔇 GAP THRESHOLD CHANGED:', { 
+                                    from: silenceThreshold, 
+                                    to: newThreshold 
+                                  });
+                                  setSilenceThreshold(newThreshold);
+                                }}
+                              />
+                              <span>{silenceThreshold}s</span>
+                            </label>
+                          </div>
+                          
                           <button 
                             className="detect-btn" 
                             onClick={() => {
@@ -776,7 +1159,25 @@ function App() {
                               console.log('🔍 detectSilentParts function completed');
                             }}
                           >
-                            Detect
+                            🎵 Detect (Audio-Based)
+                          </button>
+                        </div>
+                      )}
+                      
+                      {/* Silence Control Buttons */}
+                      {hasSilenceDetection && (
+                        <div className="silence-controls">
+                          <button 
+                            className="exclude-all-btn"
+                            onClick={excludeAllSilence}
+                          >
+                            ✂️ Exclude All Silent Parts
+                          </button>
+                          <button 
+                            className="include-all-btn"
+                            onClick={includeAllSilence}
+                          >
+                            ➕ Include All Silent Parts
                           </button>
                         </div>
                       )}
@@ -805,6 +1206,14 @@ function App() {
                           <p className="progress-text">{Math.round(exportProgress)}% {exportETA}</p>
                         </div>
                       )}
+                      {exportedFilePath && !isExporting && (
+                        <button 
+                          className="open-location-btn"
+                          onClick={openExportedFileLocation}
+                        >
+                          📁 Open File Location
+                        </button>
+                      )}
                     </div>
                   </>
                 )}
@@ -828,7 +1237,7 @@ function App() {
                     {transcript.map((segment) => (
                       <span
                         key={segment.id}
-                        className={`inline-word ${!segment.keep ? 'removed' : ''} ${segment.isSilence ? 'silence-segment' : ''} ${segment.id === currentSegmentId ? 'active' : ''}`}
+                        className={`inline-word ${!segment.keep ? 'removed' : ''} ${segment.isSilence ? 'silence-segment' : ''} ${segment.id === currentSegmentId ? 'active' : ''} ${segment.id === selectedWordId ? 'selected' : ''}`}
                         onClick={() => {
                           console.log('🎯 SEGMENT CLICKED:', {
                             id: segment.id,
@@ -838,6 +1247,9 @@ function App() {
                             keep: segment.keep,
                             isSilence: segment.isSilence
                           });
+                          // Select the word to show actions
+                          setSelectedWordId(segment.id === selectedWordId ? null : segment.id);
+                          // Still jump to the segment
                           handleSegmentClick(segment);
                         }}
                         onDoubleClick={() => {
@@ -850,32 +1262,73 @@ function App() {
                           }
                         }}
                       >
-                        {segment.text}
-                        <div className="word-tooltip">
-                          <div className="word-info">
-                            <span className="word-time">
-                              {Math.floor(segment.start / 60)}:{(segment.start % 60).toFixed(1).padStart(4, '0')} - 
-                              {Math.floor(segment.end / 60)}:{(segment.end % 60).toFixed(1).padStart(4, '0')}
-                            </span>
-                            <span className="word-duration">({(segment.end - segment.start).toFixed(1)}s)</span>
-                          </div>
-                          <button 
-                            className="inline-cut-btn"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              console.log('✂️ TOOLTIP CUT BUTTON CLICKED:', {
-                                segmentId: segment.id,
-                                text: segment.text,
-                                currentKeep: segment.keep,
-                                newKeep: !segment.keep
-                              });
-                              handleSegmentToggle(segment.id);
-                            }}
-                            title={segment.keep ? "Remove this segment" : "Keep this segment"}
-                          >
-                            {segment.keep ? "✂️" : "✓"}
-                          </button>
+                        {segment.isSilence ? (
+                          <span className="silence-content">
+                            🔇 Silence ({(segment.end - segment.start).toFixed(1)}s)
+                          </span>
+                        ) : (
+                          segment.text
+                        )}
+                        {/* Hover tooltip - just timestamp info */}
+                        <div className="word-hover-info">
+                          <span className="hover-time">
+                            {Math.floor(segment.start / 60)}:{(segment.start % 60).toFixed(1).padStart(4, '0')}
+                          </span>
+                          <span className="hover-duration">({(segment.end - segment.start).toFixed(1)}s)</span>
                         </div>
+                        {/* Action panel - shown only when selected */}
+                        {segment.id === selectedWordId && (
+                          <div className="word-action-panel">
+                            {segment.isSilence ? (
+                              <button 
+                                className="action-btn silence-toggle-btn"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  console.log('🔇 SILENCE TOGGLE CLICKED:', {
+                                    segmentId: segment.id,
+                                    start: segment.start,
+                                    end: segment.end,
+                                    currentKeep: segment.keep,
+                                    newKeep: !segment.keep
+                                  });
+                                  toggleSilenceRegion(segment.start, segment.end);
+                                }}
+                                title={segment.keep ? "Exclude this silence" : "Include this silence"}
+                              >
+                                {segment.keep ? "✂️ Exclude" : "➕ Include"}
+                              </button>
+                            ) : (
+                              <>
+                                <button 
+                                  className="action-btn toggle-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    console.log('✂️ ACTION TOGGLE CLICKED:', {
+                                      segmentId: segment.id,
+                                      text: segment.text,
+                                      currentKeep: segment.keep,
+                                      newKeep: !segment.keep
+                                    });
+                                    handleSegmentToggle(segment.id);
+                                  }}
+                                  title={segment.keep ? "Remove this segment" : "Keep this segment"}
+                                >
+                                  {segment.keep ? "✂️ Cut" : "✓ Keep"}
+                                </button>
+                                <button 
+                                  className="action-btn edit-btn"
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    handleStartEdit(segment);
+                                  }}
+                                  title="Edit text"
+                                >
+                                  ✏️ Edit
+                                </button>
+                              </>
+                            )}
+                          </div>
+                        )}
                       </span>
                     ))}
                   </div>

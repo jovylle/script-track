@@ -16,6 +16,13 @@ pub struct TranscriptionResult {
     pub duration: f64,
 }
 
+#[derive(Debug, Serialize, Deserialize)]
+pub struct SilenceRegion {
+    pub start: f64,
+    pub end: f64,
+    pub duration: f64,
+}
+
 // Global state for app
 pub struct AppState {
     pub initialized: bool,
@@ -378,6 +385,159 @@ async fn get_video_duration(file_path: String) -> Result<f64, String> {
     Ok(get_video_duration_internal(&file_path).unwrap_or(12.5))
 }
 
+#[tauri::command]
+async fn log_to_terminal(message: String) {
+    println!("{}", message);
+}
+
+#[tauri::command]
+async fn detect_audio_silence(
+    file_path: String,
+    noise_threshold: f64,
+    min_duration: f64,
+) -> Result<Vec<SilenceRegion>, String> {
+    use std::process::Command;
+    
+    println!("🔇 Detecting audio silence in: {}", file_path);
+    println!("   Noise threshold: {}dB, Min duration: {}s", noise_threshold, min_duration);
+    
+    // For blob URLs, we can't use external tools directly
+    if file_path.starts_with("blob:") {
+        return Err("Cannot detect silence in blob URLs with external tools".to_string());
+    }
+    
+    // Run FFmpeg with silencedetect filter
+    let output = Command::new("ffmpeg")
+        .arg("-i")
+        .arg(&file_path)
+        .arg("-af")
+        .arg(format!("silencedetect=noise={}dB:d={}", noise_threshold, min_duration))
+        .arg("-f")
+        .arg("null")
+        .arg("-")
+        .arg("-v")
+        .arg("info") // Ensure we get the silencedetect output
+        .output();
+    
+    match output {
+        Ok(result) => {
+            let stderr = String::from_utf8_lossy(&result.stderr);
+            println!("FFmpeg stderr output:\n{}", stderr);
+            
+            // Parse the silencedetect output
+            let silence_regions = parse_silence_output(&stderr);
+            println!("Found {} silence regions", silence_regions.len());
+            
+            for (i, region) in silence_regions.iter().enumerate() {
+                println!("  Region {}: {:.2}s - {:.2}s (duration: {:.2}s)", 
+                    i + 1, region.start, region.end, region.duration);
+            }
+            
+            Ok(silence_regions)
+        }
+        Err(e) => {
+            println!("❌ Failed to run FFmpeg: {}", e);
+            Err(format!("Failed to run FFmpeg: {}", e))
+        }
+    }
+}
+
+fn parse_silence_output(output: &str) -> Vec<SilenceRegion> {
+    use regex::Regex;
+    
+    let mut silence_regions = Vec::new();
+    
+    // Regex patterns to match FFmpeg silencedetect output
+    let silence_start_re = Regex::new(r"silence_start:\s*([0-9.]+)").unwrap();
+    let silence_end_re = Regex::new(r"silence_end:\s*([0-9.]+).*silence_duration:\s*([0-9.]+)").unwrap();
+    
+    let mut current_start: Option<f64> = None;
+    
+    for line in output.lines() {
+        // Look for silence_start
+        if let Some(caps) = silence_start_re.captures(line) {
+            if let Ok(start) = caps[1].parse::<f64>() {
+                current_start = Some(start);
+                println!("Found silence start at: {:.2}s", start);
+            }
+        }
+        
+        // Look for silence_end
+        if let Some(caps) = silence_end_re.captures(line) {
+            if let (Ok(end), Ok(duration)) = (caps[1].parse::<f64>(), caps[2].parse::<f64>()) {
+                if let Some(start) = current_start {
+                    let region = SilenceRegion {
+                        start,
+                        end,
+                        duration,
+                    };
+                    silence_regions.push(region);
+                    println!("Found silence end at: {:.2}s (duration: {:.2}s)", end, duration);
+                    current_start = None;
+                }
+            }
+        }
+    }
+    
+    silence_regions
+}
+
+#[tauri::command]
+async fn open_file_location(file_path: String) -> Result<(), String> {
+    use std::process::Command;
+    
+    println!("📁 Opening file location: {}", file_path);
+    
+    // Get the directory path
+    let path = std::path::Path::new(&file_path);
+    let parent_dir = path.parent()
+        .ok_or_else(|| "Could not get parent directory".to_string())?;
+    
+    let parent_dir_str = parent_dir.to_string_lossy().to_string();
+    
+    // Open the directory in the system file manager
+    #[cfg(target_os = "macos")]
+    {
+        let output = Command::new("open")
+            .arg("-R")
+            .arg(&file_path)
+            .output()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+        
+        if !output.status.success() {
+            return Err(format!("Failed to open file location: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        let output = Command::new("explorer")
+            .arg("/select,")
+            .arg(&file_path)
+            .output()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+        
+        if !output.status.success() {
+            return Err(format!("Failed to open file location: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+    }
+    
+    #[cfg(target_os = "linux")]
+    {
+        let output = Command::new("xdg-open")
+            .arg(&parent_dir_str)
+            .output()
+            .map_err(|e| format!("Failed to open file location: {}", e))?;
+        
+        if !output.status.success() {
+            return Err(format!("Failed to open file location: {}", String::from_utf8_lossy(&output.stderr)));
+        }
+    }
+    
+    println!("✅ Successfully opened file location");
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -387,7 +547,10 @@ pub fn run() {
                     save_uploaded_file,
                     transcribe_audio,
                     export_video,
-                    get_video_duration
+                    get_video_duration,
+                    detect_audio_silence,
+                    log_to_terminal,
+                    open_file_location
                 ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

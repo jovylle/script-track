@@ -5,6 +5,12 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Local-first](https://img.shields.io/badge/Privacy-Local--first-green.svg)](https://github.com/script-track/script-track)
 [![Open Source](https://img.shields.io/badge/Open%20Source-Yes-blue.svg)](https://github.com/script-track/script-track)
+<img width="885" height="768" alt="image" src="https://github.com/user-attachments/assets/3f5fca20-315f-492e-9628-cb020d7a7f4f" />
+
+
+<img width="1164" height="718" alt="image" src="https://github.com/user-attachments/assets/4e1a1cfd-2869-4e0a-9530-84bc5f449bc8" />
+
+<img width="1072" height="716" alt="image" src="https://github.com/user-attachments/assets/df12acb7-cd5b-4aad-a4ab-af19b3abe2e5" />
 
 A **local-first**, **open-source** alternative to Descript, focused on letting creators and developers trim or rewrite videos using the transcript instead of a full video timeline.
 
